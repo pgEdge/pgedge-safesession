@@ -1,0 +1,6 @@
+# pgEdge SafeSession extension
+comment = 'Enforce read-only sessions for specified roles'
+default_version = '1.0-alpha1'
+module_pathname = '$libdir/pgedge_safesession'
+relocatable = false
+superuser = true

@@ -1,0 +1,71 @@
+-- Bypass tests for pgEdge SafeSession
+-- Verify SET ROLE cannot escape restrictions
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP TABLE IF EXISTS test_bypass;
+NOTICE:  table "test_bypass" does not exist, skipping
+DROP ROLE IF EXISTS safesession_unrestricted;
+NOTICE:  role "safesession_unrestricted" does not exist, skipping
+DROP ROLE IF EXISTS safesession_readonly;
+NOTICE:  role "safesession_readonly" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE ROLE safesession_readonly LOGIN;
+CREATE ROLE safesession_unrestricted LOGIN;
+CREATE TABLE test_bypass (id int, val text);
+INSERT INTO test_bypass VALUES (1, 'original');
+GRANT ALL ON test_bypass TO safesession_readonly;
+GRANT ALL ON test_bypass TO safesession_unrestricted;
+-- Allow restricted role to SET ROLE to unrestricted
+GRANT safesession_unrestricted TO safesession_readonly;
+-- Configure restriction
+ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep(0.5);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+-- Connect as restricted role
+SET SESSION AUTHORIZATION safesession_readonly;
+-- SELECT should work
+SELECT * FROM test_bypass ORDER BY id;
+ id |   val    
+----+----------
+  1 | original
+(1 row)
+
+-- INSERT should be blocked
+INSERT INTO test_bypass VALUES (2, 'blocked');
+ERROR:  cannot execute INSERT in a read-only session
+-- Try SET ROLE to unrestricted role (should still be blocked
+-- because session user is restricted)
+SET ROLE safesession_unrestricted;
+INSERT INTO test_bypass VALUES (2, 'still_blocked');
+ERROR:  cannot execute INSERT in a read-only session
+-- Reset role back
+RESET ROLE;
+-- INSERT still blocked
+INSERT INTO test_bypass VALUES (2, 'still_blocked');
+ERROR:  cannot execute INSERT in a read-only session
+-- Switch back to superuser for cleanup
+RESET SESSION AUTHORIZATION;
+-- Cleanup
+ALTER SYSTEM RESET pgedge_safesession.roles;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+DROP TABLE test_bypass;
+REVOKE safesession_unrestricted FROM safesession_readonly;
+DROP ROLE safesession_unrestricted;
+DROP ROLE safesession_readonly;
+DROP EXTENSION pgedge_safesession;

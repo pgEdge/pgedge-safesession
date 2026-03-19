@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: [14, 15, 16, 17, 18]
+
+    name: PostgreSQL ${{ matrix.pg_version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL ${{ matrix.pg_version }}
+        run: |
+          sudo apt-get -y --purge remove postgresql libpq-dev \
+              libpq5 postgresql-client-common postgresql-common
+          sudo rm -rf /var/lib/postgresql
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt \
+              $(lsb_release -cs)-pgdg main" \
+              > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get -y install \
+              postgresql-${{ matrix.pg_version }} \
+              postgresql-server-dev-${{ matrix.pg_version }}
+
+      - name: Build extension
+        run: |
+          make PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+
+      - name: Install extension
+        run: |
+          sudo make install \
+              PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+
+      - name: Configure PostgreSQL
+        run: |
+          sudo sed -i \
+              "s/^#shared_preload_libraries.*/shared_preload_libraries = 'pgedge_safesession'/" \
+              /etc/postgresql/${{ matrix.pg_version }}/main/postgresql.conf
+          sudo systemctl restart postgresql@${{ matrix.pg_version }}-main
+
+      - name: Run tests
+        run: |
+          sudo -u postgres make installcheck \
+              PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config \
+              PGHOST=/var/run/postgresql
+
+      - name: Show regression diffs on failure
+        if: failure()
+        run: |
+          if [ -f regression.diffs ]; then
+              cat regression.diffs
+          fi

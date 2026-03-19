@@ -1,0 +1,22 @@
+# Claude
+/.claude/
+
+# Build artifacts
+*.o
+*.so
+*.bc
+*.dylib
+*.a
+*.pc
+
+# macOS
+.DS_Store
+
+# pg_regress output
+regression.diffs
+regression.out
+results/
+log/
+tmp_check/
+tmp_check_iso/
+output_iso/
