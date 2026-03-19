@@ -241,11 +241,7 @@ manage_read_only_guc(bool is_restricted)
 /*
  * ExecutorStart hook: block DML for restricted roles.
  */
-#if PG_VERSION_NUM >= 180000
-static bool
-#else
 static void
-#endif
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
     bool restricted = current_role_is_restricted();
@@ -299,17 +295,10 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     }
 
     /* Chain to previous hook or standard function */
-#if PG_VERSION_NUM >= 180000
-    if (prev_ExecutorStart)
-        return prev_ExecutorStart(queryDesc, eflags);
-    else
-        return standard_ExecutorStart(queryDesc, eflags);
-#else
     if (prev_ExecutorStart)
         prev_ExecutorStart(queryDesc, eflags);
     else
         standard_ExecutorStart(queryDesc, eflags);
-#endif
 }
 
 /*
@@ -516,5 +505,9 @@ _PG_init(void)
     prev_ProcessUtility = ProcessUtility_hook;
     ProcessUtility_hook = safesession_ProcessUtility;
 
+#if PG_VERSION_NUM >= 150000
     MarkGUCPrefixReserved("pgedge_safesession");
+#else
+    EmitWarningsOnPlaceholders("pgedge_safesession");
+#endif
 }

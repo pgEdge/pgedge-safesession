@@ -50,10 +50,11 @@ jobs:
               "s/^#shared_preload_libraries.*/shared_preload_libraries = 'pgedge_safesession'/" \
               /etc/postgresql/${{ matrix.pg_version }}/main/postgresql.conf
           sudo systemctl restart postgresql@${{ matrix.pg_version }}-main
+          sudo -u postgres createuser -s runner
 
       - name: Run tests
         run: |
-          sudo -u postgres make installcheck \
+          make installcheck \
               PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config \
               PGHOST=/var/run/postgresql
 
