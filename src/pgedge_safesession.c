@@ -9,6 +9,7 @@
  */
 #include "postgres.h"
 
+#include "access/xact.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
 #include "commands/copy.h"
@@ -25,7 +26,6 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-#include "access/xact.h"
 #include "utils/varlena.h"
 
 PG_MODULE_MAGIC;
@@ -94,41 +94,92 @@ contains_c_function_walker(Node *node, void *context)
 }
 
 /*
- * Check if a plan tree contains calls to C-language functions.
+ * Recursively walk a Plan tree checking all nodes for
+ * C-language function calls. Unlike just checking the
+ * top-level targetlist/qual, this visits every plan node
+ * including join conditions, hash clauses, index quals,
+ * sort expressions, etc.
+ */
+static bool
+plan_walker_check_c_functions(Plan *plan)
+{
+    ListCell *lc;
+
+    if (plan == NULL)
+        return false;
+
+    /* Check this node's targetlist and qual */
+    if (expression_tree_walker(
+            (Node *) plan->targetlist,
+            contains_c_function_walker, NULL))
+        return true;
+
+    if (expression_tree_walker(
+            (Node *) plan->qual,
+            contains_c_function_walker, NULL))
+        return true;
+
+    /* Check initPlan expressions */
+    if (expression_tree_walker(
+            (Node *) plan->initPlan,
+            contains_c_function_walker, NULL))
+        return true;
+
+    /* Recurse into child plan nodes */
+    if (plan_walker_check_c_functions(
+            innerPlan(plan)))
+        return true;
+
+    if (plan_walker_check_c_functions(
+            outerPlan(plan)))
+        return true;
+
+    /* Check any additional plans in Append, MergeAppend, etc. */
+    if (IsA(plan, Append))
+    {
+        foreach(lc, ((Append *) plan)->appendplans)
+        {
+            if (plan_walker_check_c_functions(
+                    (Plan *) lfirst(lc)))
+                return true;
+        }
+    }
+    else if (IsA(plan, MergeAppend))
+    {
+        foreach(lc, ((MergeAppend *) plan)->mergeplans)
+        {
+            if (plan_walker_check_c_functions(
+                    (Plan *) lfirst(lc)))
+                return true;
+        }
+    }
+    else if (IsA(plan, SubqueryScan))
+    {
+        if (plan_walker_check_c_functions(
+                ((SubqueryScan *) plan)->subplan))
+            return true;
+    }
+
+    return false;
+}
+
+/*
+ * Check if a planned statement contains calls to C-language
+ * functions anywhere in the plan tree or subplans.
  */
 static bool
 plan_contains_c_functions(PlannedStmt *pstmt)
 {
     ListCell *lc;
 
-    if (pstmt->planTree == NULL)
-        return false;
-
-    /* Check target list */
-    if (expression_tree_walker(
-            (Node *) pstmt->planTree->targetlist,
-            contains_c_function_walker, NULL))
+    if (plan_walker_check_c_functions(pstmt->planTree))
         return true;
 
-    /* Check qual */
-    if (expression_tree_walker(
-            (Node *) pstmt->planTree->qual,
-            contains_c_function_walker, NULL))
-        return true;
-
-    /* Check all subplans */
+    /* Check all subplans (CTEs, SubLinks, etc.) */
     foreach(lc, pstmt->subplans)
     {
-        Plan *subplan = (Plan *) lfirst(lc);
-        if (subplan == NULL)
-            continue;
-        if (expression_tree_walker(
-                (Node *) subplan->targetlist,
-                contains_c_function_walker, NULL))
-            return true;
-        if (expression_tree_walker(
-                (Node *) subplan->qual,
-                contains_c_function_walker, NULL))
+        if (plan_walker_check_c_functions(
+                (Plan *) lfirst(lc)))
             return true;
     }
 
@@ -261,19 +312,22 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
     bool restricted = current_role_is_restricted();
 
-    /* Belt-and-suspenders: manage read-only GUC */
+    /* Belt-and-suspenders: manage read-only state */
     manage_read_only_state(restricted);
 
     if (restricted)
     {
         PlannedStmt *pstmt = queryDesc->plannedstmt;
 
-        /* Block INSERT, UPDATE, DELETE */
+        /* Block INSERT, UPDATE, DELETE, MERGE */
         switch (pstmt->commandType)
         {
             case CMD_INSERT:
             case CMD_UPDATE:
             case CMD_DELETE:
+#if PG_VERSION_NUM >= 150000
+            case CMD_MERGE:
+#endif
                 ereport(ERROR,
                         (errcode(
                             ERRCODE_READ_ONLY_SQL_TRANSACTION),
@@ -282,18 +336,9 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
                                 pstmt->commandType == CMD_INSERT ?
                                 "INSERT" :
                                 pstmt->commandType == CMD_UPDATE ?
-                                "UPDATE" : "DELETE")));
-                break;
-
-            case CMD_SELECT:
-                /* Block C-language function calls */
-                if (plan_contains_c_functions(pstmt))
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute C language"
-                                    " functions in a"
-                                    " read-only session")));
+                                "UPDATE" :
+                                pstmt->commandType == CMD_DELETE ?
+                                "DELETE" : "MERGE")));
                 break;
 
             default:
@@ -358,7 +403,7 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     Node *parsetree = pstmt->utilityStmt;
     bool  restricted = current_role_is_restricted();
 
-    /* Belt-and-suspenders: manage read-only GUC */
+    /* Belt-and-suspenders: manage read-only state */
     manage_read_only_state(restricted);
 
     if (restricted && parsetree != NULL)
