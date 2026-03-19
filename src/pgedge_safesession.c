@@ -25,6 +25,7 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "access/xact.h"
 #include "utils/varlena.h"
 
 PG_MODULE_MAGIC;
@@ -214,24 +215,38 @@ current_role_is_restricted(void)
 }
 
 /*
- * Belt-and-suspenders: manage default_transaction_read_only.
+ * Belt-and-suspenders: enforce read-only at the transaction level.
  *
- * Sets it ON when the session becomes restricted, and OFF when
- * the session is no longer restricted (e.g., after RESET SESSION
- * AUTHORIZATION). This ensures that even if something bypasses
- * our hooks, PostgreSQL's own read-only checks will catch it.
+ * Sets both XactReadOnly (current transaction) and
+ * default_transaction_read_only (future transactions) when the
+ * session is restricted. Clears both when the session is no
+ * longer restricted (e.g., after RESET SESSION AUTHORIZATION).
+ *
+ * This ensures that even if something bypasses our hooks,
+ * PostgreSQL's own internal read-only checks will catch it.
  */
 static void
-manage_read_only_guc(bool is_restricted)
+manage_read_only_state(bool is_restricted)
 {
     if (is_restricted && !read_only_guc_set)
     {
+        XactReadOnly = true;
         SetConfigOption("default_transaction_read_only", "on",
                         PGC_USERSET, PGC_S_SESSION);
         read_only_guc_set = true;
     }
+    else if (is_restricted && read_only_guc_set)
+    {
+        /*
+         * Already set for the session, but ensure the
+         * current transaction is also read-only (each new
+         * transaction resets XactReadOnly from the GUC).
+         */
+        XactReadOnly = true;
+    }
     else if (!is_restricted && read_only_guc_set)
     {
+        XactReadOnly = false;
         SetConfigOption("default_transaction_read_only", "off",
                         PGC_USERSET, PGC_S_SESSION);
         read_only_guc_set = false;
@@ -247,7 +262,7 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     bool restricted = current_role_is_restricted();
 
     /* Belt-and-suspenders: manage read-only GUC */
-    manage_read_only_guc(restricted);
+    manage_read_only_state(restricted);
 
     if (restricted)
     {
@@ -344,7 +359,7 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     bool  restricted = current_role_is_restricted();
 
     /* Belt-and-suspenders: manage read-only GUC */
-    manage_read_only_guc(restricted);
+    manage_read_only_state(restricted);
 
     if (restricted && parsetree != NULL)
     {
