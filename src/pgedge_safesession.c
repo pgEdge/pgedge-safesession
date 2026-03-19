@@ -3,7 +3,7 @@
  * pgedge_safesession.c
  *      Enforce read-only sessions for specified PostgreSQL roles.
  *
- * Copyright (c) 2025, pgEdge, Inc.
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
  *
  *-------------------------------------------------------------------------
  */
