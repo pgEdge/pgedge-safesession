@@ -11,8 +11,9 @@ for restricted roles.
 ## Key Features
 
 - Blocks DML (including MERGE on PG 15+), DDL, COPY FROM,
-  GRANT/REVOKE, VACUUM/ANALYZE, and C-language function
-  execution
+  GRANT/REVOKE, VACUUM/ANALYZE, and volatile C-language
+  function execution
+- Configurable protection layers via SUSET GUCs
 - Session-user anchored: SET ROLE and SECURITY DEFINER
   functions cannot escape restrictions
 - Role membership inheritance: members of restricted roles

@@ -6,7 +6,8 @@ DATA = sql/pgedge_safesession--1.0-alpha1.sql
 
 REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_ddl safesession_copy safesession_ctas \
-          safesession_secdef safesession_membership
+          safesession_secdef safesession_membership \
+          safesession_advanced safesession_gucs
 REGRESS_OPTS = --inputdir=test --temp-config test/safesession.conf
 
 PG_CONFIG ?= pg_config

@@ -1,0 +1,111 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- Advanced tests for pgEdge SafeSession
+-- Tests additional attack vectors and edge cases
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP TABLE IF EXISTS test_advanced;
+NOTICE:  table "test_advanced" does not exist, skipping
+DROP ROLE IF EXISTS safesession_adv;
+NOTICE:  role "safesession_adv" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE ROLE safesession_adv LOGIN;
+CREATE TABLE test_advanced (id int, val text);
+INSERT INTO test_advanced VALUES (1, 'hello'), (2, 'world');
+-- Grant access
+GRANT SELECT, INSERT, UPDATE, DELETE ON test_advanced
+    TO safesession_adv;
+-- Configure the restricted role
+ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_adv';
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep(0.5);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+-- Switch to restricted role
+SET SESSION AUTHORIZATION safesession_adv;
+-- SELECT with WHERE clause should work
+SELECT * FROM test_advanced WHERE id = 1;
+ id |  val  
+----+-------
+  1 | hello
+(1 row)
+
+-- SELECT with multiple WHERE conditions should work
+SELECT * FROM test_advanced WHERE id > 0 AND val = 'hello';
+ id |  val  
+----+-------
+  1 | hello
+(1 row)
+
+-- Aggregate functions should work
+SELECT count(*) FROM test_advanced;
+ count 
+-------
+     2
+(1 row)
+
+SELECT sum(id) FROM test_advanced;
+ sum 
+-----
+   3
+(1 row)
+
+SELECT max(id), min(id) FROM test_advanced;
+ max | min 
+-----+-----
+   2 |   1
+(1 row)
+
+-- PREPARE a write statement (allowed)
+PREPARE write_plan AS INSERT INTO test_advanced VALUES (3, 'blocked');
+-- EXECUTE it (should be blocked at executor level)
+EXECUTE write_plan;
+ERROR:  cannot execute INSERT in a read-only session
+-- Cleanup the prepared statement
+DEALLOCATE write_plan;
+-- DO block with inner write should be blocked
+DO $$ BEGIN INSERT INTO test_advanced VALUES (3, 'blocked'); END; $$;
+ERROR:  cannot execute INSERT in a read-only session
+CONTEXT:  SQL statement "INSERT INTO test_advanced VALUES (3, 'blocked')"
+PL/pgSQL function inline_code_block line 1 at SQL statement
+-- SET TRANSACTION READ WRITE should be blocked
+SET TRANSACTION READ WRITE;
+ERROR:  cannot modify read-only transaction settings in a read-only session
+-- SET TRANSACTION ISOLATION LEVEL should be allowed
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+SELECT * FROM test_advanced WHERE id = 1;
+ id |  val  
+----+-------
+  1 | hello
+(1 row)
+
+COMMIT;
+-- Switch back to superuser for cleanup
+RESET SESSION AUTHORIZATION;
+-- Cleanup
+ALTER SYSTEM RESET pgedge_safesession.roles;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+DROP TABLE test_advanced;
+DROP ROLE safesession_adv;
+DROP EXTENSION pgedge_safesession;

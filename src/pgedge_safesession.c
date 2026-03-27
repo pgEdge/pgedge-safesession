@@ -30,8 +30,13 @@
 
 PG_MODULE_MAGIC;
 
-/* GUC variable */
+/* GUC variables */
 static char *safesession_roles = NULL;
+static bool safesession_block_dml = true;
+static bool safesession_block_ddl = true;
+static bool safesession_block_c_functions = true;
+static bool safesession_block_all_c_functions = false;
+static bool safesession_force_read_only = true;
 
 /* Track whether we've set default_transaction_read_only */
 static bool read_only_guc_set = false;
@@ -44,7 +49,16 @@ static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 void _PG_init(void);
 
 /*
- * Check if a function OID refers to a C-language function.
+ * Check if a function OID refers to a blocked C-language
+ * function.
+ *
+ * When block_all_c_functions is false (default), only
+ * VOLATILE C functions are blocked. IMMUTABLE and STABLE
+ * C functions (e.g., PostGIS geometry ops, pgvector distance
+ * ops) are allowed since they promise no side effects.
+ *
+ * When block_all_c_functions is true, all C-language
+ * functions are blocked regardless of volatility.
  */
 static bool
 is_c_language_function(Oid funcid)
@@ -59,7 +73,15 @@ is_c_language_function(Oid funcid)
         return false;
 
     procform = (Form_pg_proc) GETSTRUCT(proctup);
-    result = (procform->prolang == ClanguageId);
+
+    if (procform->prolang == ClanguageId)
+    {
+        if (safesession_block_all_c_functions)
+            result = true;
+        else
+            result = (procform->provolatile ==
+                      PROVOLATILE_VOLATILE);
+    }
 
     ReleaseSysCache(proctup);
     return result;
@@ -305,7 +327,8 @@ manage_read_only_state(bool is_restricted)
 }
 
 /*
- * ExecutorStart hook: block DML for restricted roles.
+ * ExecutorStart hook: block DML and C-language functions
+ * for restricted roles.
  */
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
@@ -313,45 +336,54 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     bool restricted = current_role_is_restricted();
 
     /* Belt-and-suspenders: manage read-only state */
-    manage_read_only_state(restricted);
+    if (safesession_force_read_only)
+        manage_read_only_state(restricted);
 
     if (restricted)
     {
         PlannedStmt *pstmt = queryDesc->plannedstmt;
 
         /* Block INSERT, UPDATE, DELETE, MERGE */
-        switch (pstmt->commandType)
+        if (safesession_block_dml)
         {
-            case CMD_INSERT:
-            case CMD_UPDATE:
-            case CMD_DELETE:
+            switch (pstmt->commandType)
+            {
+                case CMD_INSERT:
+                case CMD_UPDATE:
+                case CMD_DELETE:
 #if PG_VERSION_NUM >= 150000
-            case CMD_MERGE:
+                case CMD_MERGE:
 #endif
-                ereport(ERROR,
-                        (errcode(
-                            ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                         errmsg("cannot execute %s in a"
-                                " read-only session",
-                                pstmt->commandType == CMD_INSERT ?
-                                "INSERT" :
-                                pstmt->commandType == CMD_UPDATE ?
-                                "UPDATE" :
-                                pstmt->commandType == CMD_DELETE ?
-                                "DELETE" : "MERGE")));
-                break;
-
-            default:
-                /* Block C-language function calls */
-                if (plan_contains_c_functions(pstmt))
                     ereport(ERROR,
                             (errcode(
                                 ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute C language"
-                                    " functions in a"
-                                    " read-only session")));
-                break;
+                             errmsg("cannot execute %s in a"
+                                    " read-only session",
+                                    pstmt->commandType ==
+                                    CMD_INSERT ?
+                                    "INSERT" :
+                                    pstmt->commandType ==
+                                    CMD_UPDATE ?
+                                    "UPDATE" :
+                                    pstmt->commandType ==
+                                    CMD_DELETE ?
+                                    "DELETE" : "MERGE")));
+                    break;
+
+                default:
+                    break;
+            }
         }
+
+        /* Block C-language function calls */
+        if (safesession_block_c_functions &&
+            plan_contains_c_functions(pstmt))
+            ereport(ERROR,
+                    (errcode(
+                        ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                     errmsg("cannot execute C language"
+                            " functions in a"
+                            " read-only session")));
     }
 
     /* Chain to previous hook or standard function */
@@ -373,11 +405,37 @@ is_protected_guc_set(VariableSetStmt *stmt)
         stmt->kind == VAR_RESET)
     {
         if (stmt->name != NULL &&
-            (pg_strcasecmp(stmt->name,
-                           "default_transaction_read_only") == 0 ||
-             pg_strcasecmp(stmt->name,
-                           "transaction_read_only") == 0))
+            pg_strcasecmp(stmt->name,
+                          "default_transaction_read_only") == 0)
             return true;
+    }
+
+    /*
+     * SET TRANSACTION ... uses VAR_SET_MULTI with
+     * name = "TRANSACTION" and a DefElem args list.
+     * Check if any DefElem targets transaction_read_only
+     * with a false value (i.e., READ WRITE).
+     */
+    if (stmt->kind == VAR_SET_MULTI)
+    {
+        ListCell *lc;
+
+        foreach(lc, stmt->args)
+        {
+            DefElem *opt = (DefElem *) lfirst(lc);
+
+            if (strcmp(opt->defname,
+                       "transaction_read_only") == 0)
+            {
+                /*
+                 * Block READ WRITE (value 0). Allow
+                 * READ ONLY (value 1) since it is
+                 * redundant with our enforcement.
+                 */
+                if (intVal(opt->arg) == 0)
+                    return true;
+            }
+        }
     }
 
     /* RESET ALL would reset our protected GUCs */
@@ -386,6 +444,7 @@ is_protected_guc_set(VariableSetStmt *stmt)
 
     return false;
 }
+
 
 /*
  * ProcessUtility hook: block DDL and other write operations.
@@ -404,9 +463,10 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     bool  restricted = current_role_is_restricted();
 
     /* Belt-and-suspenders: manage read-only state */
-    manage_read_only_state(restricted);
+    if (safesession_force_read_only)
+        manage_read_only_state(restricted);
 
-    if (restricted && parsetree != NULL)
+    if (restricted && parsetree != NULL && safesession_block_ddl)
     {
         NodeTag tag = nodeTag(parsetree);
 
@@ -419,12 +479,13 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              * - Transaction control
              * - EXPLAIN (does not execute writes)
              * - PREPARE/EXECUTE/DEALLOCATE
-             * - SET/RESET (except protected GUCs)
+             * - SET/RESET (except protected GUCs and
+             *   SET TRANSACTION READ WRITE)
              * - SHOW
              * - LISTEN/NOTIFY/UNLISTEN
              * - DECLARE/FETCH/CLOSE cursor
              * - CHECKPOINT (read-only operation)
-             * - COPY TO (read-only)
+             * - COPY TO (read-only, not PROGRAM)
              * - DO blocks (inner writes caught by
              *   ExecutorStart)
              */
@@ -462,15 +523,30 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                 break;
 
             case T_CopyStmt:
-                /* Allow COPY TO, block COPY FROM */
-                if (((CopyStmt *) parsetree)->is_from)
+            {
+                CopyStmt *cstmt =
+                    (CopyStmt *) parsetree;
+
+                /* Block COPY FROM */
+                if (cstmt->is_from)
                     ereport(ERROR,
                             (errcode(
                                 ERRCODE_READ_ONLY_SQL_TRANSACTION),
                              errmsg("cannot execute COPY FROM"
                                     " in a read-only"
                                     " session")));
+
+                /* Block COPY TO PROGRAM */
+                if (cstmt->is_program)
+                    ereport(ERROR,
+                            (errcode(
+                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                             errmsg("cannot execute"
+                                    " COPY TO PROGRAM"
+                                    " in a read-only"
+                                    " session")));
                 break;
+            }
 
             case T_LockStmt:
                 /* Block exclusive locks */
@@ -543,7 +619,7 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
 void
 _PG_init(void)
 {
-    /* Define the GUC */
+    /* Define GUCs */
     DefineCustomStringVariable(
         "pgedge_safesession.roles",
         "Comma-separated list of roles that are restricted "
@@ -551,6 +627,75 @@ _PG_init(void)
         NULL,
         &safesession_roles,
         "",
+        PGC_SUSET,
+        0,
+        NULL,
+        NULL,
+        NULL);
+
+    DefineCustomBoolVariable(
+        "pgedge_safesession.block_dml",
+        "Block INSERT, UPDATE, DELETE, and MERGE for "
+        "restricted roles.",
+        NULL,
+        &safesession_block_dml,
+        true,
+        PGC_SUSET,
+        0,
+        NULL,
+        NULL,
+        NULL);
+
+    DefineCustomBoolVariable(
+        "pgedge_safesession.block_ddl",
+        "Block DDL and other utility commands for "
+        "restricted roles.",
+        NULL,
+        &safesession_block_ddl,
+        true,
+        PGC_SUSET,
+        0,
+        NULL,
+        NULL,
+        NULL);
+
+    DefineCustomBoolVariable(
+        "pgedge_safesession.block_c_functions",
+        "Block C-language function execution for "
+        "restricted roles. By default only volatile "
+        "C functions are blocked.",
+        NULL,
+        &safesession_block_c_functions,
+        true,
+        PGC_SUSET,
+        0,
+        NULL,
+        NULL,
+        NULL);
+
+    DefineCustomBoolVariable(
+        "pgedge_safesession.block_all_c_functions",
+        "Block all C-language functions regardless of "
+        "volatility. When off, only volatile C functions "
+        "are blocked. Only applies when block_c_functions "
+        "is on.",
+        NULL,
+        &safesession_block_all_c_functions,
+        false,
+        PGC_SUSET,
+        0,
+        NULL,
+        NULL,
+        NULL);
+
+    DefineCustomBoolVariable(
+        "pgedge_safesession.force_read_only",
+        "Set default_transaction_read_only and "
+        "XactReadOnly for restricted sessions as "
+        "belt-and-suspenders protection.",
+        NULL,
+        &safesession_force_read_only,
+        true,
         PGC_SUSET,
         0,
         NULL,

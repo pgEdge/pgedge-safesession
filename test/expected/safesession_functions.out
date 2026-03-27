@@ -1,3 +1,11 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
 -- Function tests for pgEdge SafeSession
 -- PL/pgSQL write attempts are blocked; read-only functions allowed
 -- Setup: clean any stale state
