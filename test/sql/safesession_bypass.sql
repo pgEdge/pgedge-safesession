@@ -1,3 +1,12 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
 -- Bypass tests for pgEdge SafeSession
 -- Verify SET ROLE cannot escape restrictions
 

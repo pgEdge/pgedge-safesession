@@ -10,8 +10,9 @@ for restricted roles.
 
 ## Key Features
 
-- Blocks DML, DDL, COPY FROM, GRANT/REVOKE, VACUUM/ANALYZE,
-  and C-language function execution
+- Blocks DML (including MERGE on PG 15+), DDL, COPY FROM,
+  GRANT/REVOKE, VACUUM/ANALYZE, and C-language function
+  execution
 - Session-user anchored: SET ROLE and SECURITY DEFINER
   functions cannot escape restrictions
 - Role membership inheritance: members of restricted roles

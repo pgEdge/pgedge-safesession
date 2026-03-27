@@ -10,8 +10,8 @@ to the database server for specified PostgreSQL roles.
 An SUSET GUC is used to define the PostgreSQL roles to which read-only 
 enforcement is applied. Any session for a role that is, or has membership of,
 a role specified in a comma delimited list in the GUC 
-(pgedge_safesession_roles) will have read-only operation enforced. This will
-be achived through the use of planner/executor hooks which will force the
+(pgedge_safesession.roles) will have read-only operation enforced. This will
+be achieved through the use of planner/executor hooks which will force the
 transaction into READ ONLY mode.
 
 ## Guardrails
@@ -25,7 +25,7 @@ means such as:
 * Functions that may call SPI_exec or similar
 
 If a session is running as a role or member of a role that is listed in the
-pgedge_safesession_roles GUC, it MUST NOT be able to break through those 
+pgedge_safesession.roles GUC, it MUST NOT be able to break through those 
 protections and execute any query that may modify data or schema, or call any
 function, stored procedure, COPY TO, or similar in any way that might cause 
 any writes.

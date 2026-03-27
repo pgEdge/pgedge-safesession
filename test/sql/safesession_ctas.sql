@@ -1,3 +1,12 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
 -- CTAS tests for pgEdge SafeSession
 -- CREATE TABLE AS and SELECT INTO should be blocked
 

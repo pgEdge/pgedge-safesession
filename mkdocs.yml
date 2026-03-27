@@ -47,7 +47,7 @@ extra:
   generator: false
 
 copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
-repo_url: https://github.com/pgEdge/<PROJECT REPO>
+repo_url: https://github.com/pgEdge/pgedge-safesession
 
 nav:
   - Getting Started:

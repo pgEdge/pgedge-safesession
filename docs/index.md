@@ -8,7 +8,8 @@ dangerous commands.
 
 ## Features
 
-- Block DML (INSERT, UPDATE, DELETE) for restricted roles
+- Block DML (INSERT, UPDATE, DELETE, MERGE) for restricted
+  roles
 - Block DDL (CREATE, ALTER, DROP, TRUNCATE, etc.)
 - Block COPY FROM, GRANT/REVOKE, VACUUM/ANALYZE
 - Block C-language function execution (which can bypass the
@@ -78,7 +79,7 @@ read-only operations.
 
 For restricted sessions, the following operations are blocked:
 
-- **DML**: INSERT, UPDATE, DELETE
+- **DML**: INSERT, UPDATE, DELETE, MERGE (PostgreSQL 15+)
 - **DDL**: CREATE, ALTER, DROP, TRUNCATE, and all other schema
   modification commands
 - **COPY FROM**: data import (COPY TO is allowed)

@@ -1,3 +1,12 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
 -- Basic tests for pgEdge SafeSession
 -- Test that SELECT is allowed and DML is blocked for restricted roles
 

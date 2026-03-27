@@ -1,3 +1,12 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
 -- DDL tests for pgEdge SafeSession
 -- All DDL operations should be blocked for restricted roles
 

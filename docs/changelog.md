@@ -14,8 +14,8 @@ and this project adheres to
 - Initial release of pgEdge SafeSession
 - GUC `pgedge_safesession.roles` (SUSET) to specify
   restricted roles
-- ExecutorStart hook to block DML (INSERT, UPDATE, DELETE)
-  and C-language function execution
+- ExecutorStart hook to block DML (INSERT, UPDATE, DELETE,
+  MERGE) and C-language function execution
 - ProcessUtility hook to block DDL, COPY FROM, GRANT/REVOKE,
   VACUUM/ANALYZE, exclusive locks, and GUC tampering
 - Session-user anchored role checking: SET ROLE cannot escape
