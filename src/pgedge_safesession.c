@@ -431,8 +431,19 @@ is_protected_guc_set(VariableSetStmt *stmt)
                  * Block READ WRITE (value 0). Allow
                  * READ ONLY (value 1) since it is
                  * redundant with our enforcement.
+                 *
+                 * The argument is an A_Const wrapping an
+                 * integer. We must read the value through
+                 * the embedded node: applying intVal()
+                 * directly to the A_Const reads the wrong
+                 * field on PostgreSQL 14 (where A_Const
+                 * embeds a legacy Value node) and would
+                 * trip an assertion on assert-enabled
+                 * builds of PostgreSQL 15+.
                  */
-                if (intVal(opt->arg) == 0)
+                if (opt->arg != NULL &&
+                    IsA(opt->arg, A_Const) &&
+                    intVal(&((A_Const *) opt->arg)->val) == 0)
                     return true;
             }
         }
