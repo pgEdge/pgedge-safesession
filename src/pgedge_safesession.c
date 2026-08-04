@@ -147,6 +147,61 @@ language_is_trusted(Oid prolang)
 }
 
 /*
+ * Is the procedural language of a DO block trusted? A DO block in a
+ * trusted language (PL/pgSQL by default) runs its work as SQL through the
+ * executor, so its writes and any dangerous calls are caught downstream;
+ * one in an untrusted language (plpython3u, plperlu, ...) can act
+ * natively and must be rejected.
+ */
+static bool
+do_block_is_trusted(DoStmt *stmt)
+{
+    ListCell   *lc;
+    const char *langname = "plpgsql";   /* the default DO language */
+    HeapTuple   langtup;
+    bool        trusted;
+
+    foreach(lc, stmt->args)
+    {
+        DefElem *de = (DefElem *) lfirst(lc);
+
+        if (strcmp(de->defname, "language") == 0)
+            langname = strVal(de->arg);
+    }
+
+    langtup = SearchSysCache1(LANGNAME, CStringGetDatum(langname));
+    if (!HeapTupleIsValid(langtup))
+        return false;   /* unknown language: treat as untrusted */
+
+    trusted = ((Form_pg_language) GETSTRUCT(langtup))->lanpltrusted;
+    ReleaseSysCache(langtup);
+    return trusted;
+}
+
+/*
+ * Is the language of the procedure invoked by a CALL trusted? Same
+ * reasoning as do_block_is_trusted().
+ */
+static bool
+call_target_is_trusted(CallStmt *stmt)
+{
+    HeapTuple    proctup;
+    Oid          prolang;
+
+    if (stmt->funcexpr == NULL)
+        return false;
+
+    proctup = SearchSysCache1(PROCOID,
+                              ObjectIdGetDatum(stmt->funcexpr->funcid));
+    if (!HeapTupleIsValid(proctup))
+        return false;
+
+    prolang = ((Form_pg_proc) GETSTRUCT(proctup))->prolang;
+    ReleaseSysCache(proctup);
+    return language_is_trusted(prolang);
+}
+
+/*
  * An aggregate carries its own volatility in pg_proc, which need not match
  * that of its underlying support functions: CREATE AGGREGATE happily
  * leaves an aggregate marked IMMUTABLE even when its transition function
@@ -717,13 +772,15 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              * - SHOW
              * - LISTEN/NOTIFY/UNLISTEN
              * - DECLARE/FETCH/CLOSE cursor
-             * - CHECKPOINT (read-only operation)
              * - COPY TO (read-only, not PROGRAM)
-             * - DO blocks (inner writes caught by
-             *   ExecutorStart)
              * - DISCARD (session-state reset; enforcement is
              *   re-asserted per statement, so it is harmless and
              *   is needed by connection poolers)
+             *
+             * CHECKPOINT is deliberately not here: it is not a
+             * read-only operation (heavy I/O, emits WAL) and is a
+             * denial-of-service lever for a role holding
+             * pg_checkpoint, so it falls through to the default deny.
              */
             case T_PrepareStmt:
             case T_ExecuteStmt:
@@ -734,10 +791,39 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_ListenStmt:
             case T_NotifyStmt:
             case T_UnlistenStmt:
-            case T_CheckPointStmt:
-            case T_DoStmt:
             case T_DiscardStmt:
                 /* These are allowed */
+                break;
+
+            case T_DoStmt:
+                /*
+                 * A DO block in a trusted language is allowed (its
+                 * writes and dangerous calls are caught downstream);
+                 * one in an untrusted language can act natively and
+                 * is rejected.
+                 */
+                if (!do_block_is_trusted((DoStmt *) parsetree))
+                    ereport(ERROR,
+                            (errcode(
+                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                             errmsg("cannot execute a DO block in an"
+                                    " untrusted language in a"
+                                    " read-only session")));
+                break;
+
+            case T_CallStmt:
+                /*
+                 * CALL is treated the same way as a DO block: a
+                 * procedure in a trusted language is allowed, one in
+                 * an untrusted language is rejected.
+                 */
+                if (!call_target_is_trusted((CallStmt *) parsetree))
+                    ereport(ERROR,
+                            (errcode(
+                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                             errmsg("cannot CALL a procedure in an"
+                                    " untrusted language in a"
+                                    " read-only session")));
                 break;
 
             case T_TransactionStmt:
