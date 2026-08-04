@@ -715,7 +715,6 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              *   re-asserted per statement, so it is harmless and
              *   is needed by connection poolers)
              */
-            case T_TransactionStmt:
             case T_PrepareStmt:
             case T_ExecuteStmt:
             case T_DeallocateStmt:
@@ -729,6 +728,33 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_DoStmt:
             case T_DiscardStmt:
                 /* These are allowed */
+                break;
+
+            case T_TransactionStmt:
+                /*
+                 * Ordinary transaction control (BEGIN, COMMIT,
+                 * ROLLBACK, SAVEPOINT, ...) is fine, but the
+                 * two-phase-commit forms are not. COMMIT PREPARED
+                 * commits whatever the prepared transaction wrote,
+                 * and a read-only session has no business driving
+                 * two-phase commit at all, so PREPARE TRANSACTION
+                 * and ROLLBACK PREPARED are rejected as well.
+                 */
+                switch (((TransactionStmt *) parsetree)->kind)
+                {
+                    case TRANS_STMT_PREPARE:
+                    case TRANS_STMT_COMMIT_PREPARED:
+                    case TRANS_STMT_ROLLBACK_PREPARED:
+                        ereport(ERROR,
+                                (errcode(
+                                    ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                                 errmsg("cannot execute two-phase"
+                                        " commit statements in a"
+                                        " read-only session")));
+                        break;
+                    default:
+                        break;
+                }
                 break;
 
             case T_ExplainStmt:
