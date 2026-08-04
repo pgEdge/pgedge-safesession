@@ -14,7 +14,6 @@
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
-#include "commands/copy.h"
 #include "commands/defrem.h"
 #include "executor/executor.h"
 #include "fmgr.h"
@@ -1131,13 +1130,14 @@ _PG_init(void)
     /* Define GUCs */
     DefineCustomStringVariable(
         "pgedge_safesession.roles",
-        "Comma-separated list of roles that are restricted "
-        "to read-only sessions.",
-        NULL,
+        "Roles that are restricted to read-only sessions.",
+        "A comma-separated list of role names. A session whose "
+        "session or current user is one of these roles, or is a "
+        "member of one, is restricted to read-only access.",
         &safesession_roles,
         "",
         PGC_SUSET,
-        0,
+        GUC_LIST_INPUT,
         check_safesession_roles,
         assign_safesession_roles,
         NULL);
@@ -1146,7 +1146,10 @@ _PG_init(void)
         "pgedge_safesession.block_dml",
         "Block INSERT, UPDATE, DELETE, and MERGE for "
         "restricted roles.",
-        NULL,
+        "This includes data-modifying CTEs (WITH ... INSERT/"
+        "UPDATE/DELETE ... RETURNING). When off, such writes are "
+        "still rejected by the read-only transaction the "
+        "extension enforces.",
         &safesession_block_dml,
         true,
         PGC_SUSET,
@@ -1159,7 +1162,11 @@ _PG_init(void)
         "pgedge_safesession.block_ddl",
         "Block DDL and other utility commands for "
         "restricted roles.",
-        NULL,
+        "Covers the utility statements the read-only transaction "
+        "does not catch on its own, such as COPY TO PROGRAM, "
+        "exclusive LOCK, VACUUM/ANALYZE and CHECKPOINT. When off, "
+        "ordinary DDL is still rejected by the read-only "
+        "transaction.",
         &safesession_block_ddl,
         true,
         PGC_SUSET,
@@ -1171,10 +1178,11 @@ _PG_init(void)
     DefineCustomBoolVariable(
         "pgedge_safesession.block_c_functions",
         "Block execution of functions that may have side "
-        "effects for restricted roles: volatile user or "
-        "extension functions, plus a set of side-effecting "
-        "built-ins.",
-        NULL,
+        "effects for restricted roles.",
+        "Blocks volatile functions in untrusted languages (C, "
+        "internal or an untrusted PL) and a curated list of "
+        "side-effecting built-ins. Harmless volatile built-ins "
+        "such as random() remain allowed.",
         &safesession_block_c_functions,
         true,
         PGC_SUSET,
@@ -1186,10 +1194,12 @@ _PG_init(void)
     DefineCustomBoolVariable(
         "pgedge_safesession.block_all_c_functions",
         "Additionally block every C-language function "
-        "regardless of volatility. This can break read-only "
-        "extension functions (e.g. PostGIS, pgvector). Only "
-        "applies when block_c_functions is on.",
-        NULL,
+        "regardless of volatility.",
+        "Escalates block_c_functions to reject all C-language "
+        "functions, not only volatile ones. This can break "
+        "read-only extension functions (e.g. PostGIS or pgvector "
+        "operators), so leave it off unless you specifically need "
+        "it. Only applies when block_c_functions is on.",
         &safesession_block_all_c_functions,
         false,
         PGC_SUSET,
