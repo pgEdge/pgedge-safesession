@@ -1,0 +1,57 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- Introspection tests for pgEdge SafeSession
+-- pgedge_safesession_is_restricted() reports whether the current session
+-- is restricted to read-only access.
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP ROLE IF EXISTS safesession_status;
+NOTICE:  role "safesession_status" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE ROLE safesession_status LOGIN;
+ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_status';
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep(0.5);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+-- A superuser session is never restricted
+SELECT pgedge_safesession_is_restricted();
+ pgedge_safesession_is_restricted 
+----------------------------------
+ f
+(1 row)
+
+-- The restricted role reports as restricted
+SET SESSION AUTHORIZATION safesession_status;
+SELECT pgedge_safesession_is_restricted();
+ pgedge_safesession_is_restricted 
+----------------------------------
+ t
+(1 row)
+
+RESET SESSION AUTHORIZATION;
+-- Cleanup
+ALTER SYSTEM RESET pgedge_safesession.roles;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+DROP ROLE safesession_status;
+DROP EXTENSION pgedge_safesession;
