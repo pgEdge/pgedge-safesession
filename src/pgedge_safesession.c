@@ -39,10 +39,6 @@ static bool safesession_block_dml = true;
 static bool safesession_block_ddl = true;
 static bool safesession_block_c_functions = true;
 static bool safesession_block_all_c_functions = false;
-static bool safesession_force_read_only = true;
-
-/* Track whether we've set default_transaction_read_only */
-static bool read_only_guc_set = false;
 
 /* Saved hook values */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
@@ -374,42 +370,24 @@ current_role_is_restricted(void)
 }
 
 /*
- * Belt-and-suspenders: enforce read-only at the transaction level.
+ * Belt-and-suspenders: force the current transaction read-only for a
+ * restricted session, so PostgreSQL's own internal checks reject any
+ * write that slips past our hooks.
  *
- * Sets both XactReadOnly (current transaction) and
- * default_transaction_read_only (future transactions) when the
- * session is restricted. Clears both when the session is no
- * longer restricted (e.g., after RESET SESSION AUTHORIZATION).
+ * We set XactReadOnly directly, per statement, and never touch the
+ * default_transaction_read_only GUC. XactReadOnly is transaction-scoped
+ * and reset from the GUC at the start of each transaction, so setting it
+ * on every executed statement and utility command keeps the current
+ * transaction read-only without leaving any session-level state behind.
  *
- * This ensures that even if something bypasses our hooks,
- * PostgreSQL's own internal read-only checks will catch it.
+ * We deliberately never clear it: a session that is not restricted is
+ * left alone, so a user's own BEGIN READ ONLY / SET TRANSACTION READ ONLY
+ * is not overridden.
  */
 static void
-manage_read_only_state(bool is_restricted)
+enforce_read_only(void)
 {
-    if (is_restricted && !read_only_guc_set)
-    {
-        XactReadOnly = true;
-        SetConfigOption("default_transaction_read_only", "on",
-                        PGC_USERSET, PGC_S_SESSION);
-        read_only_guc_set = true;
-    }
-    else if (is_restricted && read_only_guc_set)
-    {
-        /*
-         * Already set for the session, but ensure the
-         * current transaction is also read-only (each new
-         * transaction resets XactReadOnly from the GUC).
-         */
-        XactReadOnly = true;
-    }
-    else if (!is_restricted && read_only_guc_set)
-    {
-        XactReadOnly = false;
-        SetConfigOption("default_transaction_read_only", "off",
-                        PGC_USERSET, PGC_S_SESSION);
-        read_only_guc_set = false;
-    }
+    XactReadOnly = true;
 }
 
 /*
@@ -433,9 +411,9 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     {
         restricted = current_role_is_restricted();
 
-        /* Belt-and-suspenders: manage read-only state */
-        if (safesession_force_read_only)
-            manage_read_only_state(restricted);
+        /* Belt-and-suspenders: force the transaction read-only */
+        if (restricted)
+            enforce_read_only();
     }
 
     if (restricted)
@@ -585,9 +563,14 @@ is_protected_guc_set(VariableSetStmt *stmt)
         }
     }
 
-    /* RESET ALL would reset our protected GUCs */
-    if (stmt->kind == VAR_RESET_ALL)
-        return true;
+    /*
+     * RESET ALL is intentionally not treated as protected. Enforcement no
+     * longer relies on any session-level GUC we could set (XactReadOnly is
+     * re-asserted per statement), and our own GUCs are PGC_SUSET, so a
+     * restricted role's RESET ALL cannot relax the restriction. Allowing it
+     * keeps connection poolers, which issue RESET ALL on connection reset,
+     * working.
+     */
 
     return false;
 }
@@ -679,9 +662,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     {
         restricted = current_role_is_restricted();
 
-        /* Belt-and-suspenders: manage read-only state */
-        if (safesession_force_read_only)
-            manage_read_only_state(restricted);
+        /* Belt-and-suspenders: force the transaction read-only */
+        if (restricted)
+            enforce_read_only();
     }
 
     /*
@@ -728,6 +711,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              * - COPY TO (read-only, not PROGRAM)
              * - DO blocks (inner writes caught by
              *   ExecutorStart)
+             * - DISCARD (session-state reset; enforcement is
+             *   re-asserted per statement, so it is harmless and
+             *   is needed by connection poolers)
              */
             case T_TransactionStmt:
             case T_PrepareStmt:
@@ -741,6 +727,7 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_UnlistenStmt:
             case T_CheckPointStmt:
             case T_DoStmt:
+            case T_DiscardStmt:
                 /* These are allowed */
                 break;
 
@@ -931,20 +918,6 @@ _PG_init(void)
         NULL,
         &safesession_block_all_c_functions,
         false,
-        PGC_SUSET,
-        0,
-        NULL,
-        NULL,
-        NULL);
-
-    DefineCustomBoolVariable(
-        "pgedge_safesession.force_read_only",
-        "Set default_transaction_read_only and "
-        "XactReadOnly for restricted sessions as "
-        "belt-and-suspenders protection.",
-        NULL,
-        &safesession_force_read_only,
-        true,
         PGC_SUSET,
         0,
         NULL,

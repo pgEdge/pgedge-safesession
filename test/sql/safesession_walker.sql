@@ -14,9 +14,10 @@
 -- each must be rejected. Harmless functions, and volatile functions in
 -- trusted languages, must still be allowed.
 --
--- Runs with force_read_only off so that the block comes from SafeSession's
--- own function detection, not from core's read-only transaction check
--- (which would reject nextval on its own).
+-- Function detection runs in the post_parse_analyze hook, before the
+-- statement executes, so the error comes from SafeSession's own check
+-- ("... in a read-only session") rather than from core's execution-time
+-- read-only transaction check.
 
 -- Setup: clean any stale state
 RESET SESSION AUTHORIZATION;
@@ -49,7 +50,6 @@ GRANT USAGE ON SEQUENCE walk_seq TO safesession_walk;
 GRANT EXECUTE ON FUNCTION walk_vol(int), walk_imm(int) TO safesession_walk;
 
 ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_walk';
-ALTER SYSTEM SET pgedge_safesession.force_read_only = off;
 SELECT pg_reload_conf();
 SELECT pg_sleep(0.5);
 
@@ -96,7 +96,6 @@ SELECT last_value, is_called FROM walk_seq;
 
 -- Cleanup
 ALTER SYSTEM RESET pgedge_safesession.roles;
-ALTER SYSTEM RESET pgedge_safesession.force_read_only;
 SELECT pg_reload_conf();
 DROP FUNCTION walk_vol(int);
 DROP FUNCTION walk_imm(int);

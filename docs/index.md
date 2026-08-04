@@ -119,16 +119,6 @@ regardless of volatility. This provides stricter
 protection at the cost of blocking read-only extension
 functions. Only applies when `block_c_functions` is on.
 
-### `pgedge_safesession.force_read_only`
-
-Default: `on`
-
-Sets `default_transaction_read_only = on` and
-`XactReadOnly = true` for restricted sessions as
-belt-and-suspenders protection. This ensures that even if
-something bypasses the hooks, PostgreSQL's own internal
-read-only checks will catch it.
-
 ## What is Blocked
 
 For restricted sessions (with all protections enabled),
@@ -210,12 +200,15 @@ of `app_reader` is also restricted. This uses PostgreSQL's
 
 ### Belt-and-Suspenders
 
-When `force_read_only` is enabled (the default),
-SafeSession sets `default_transaction_read_only = on` for
-restricted sessions. This provides an additional layer of
-protection: even if a C function somehow bypasses the
-hooks and attempts direct heap writes, PostgreSQL's own
-internal read-only checks will catch it.
+For every restricted session SafeSession also forces the
+current transaction read-only (`XactReadOnly`), re-asserted
+on each statement. This provides an additional layer of
+protection that cannot be turned off: even if something
+bypasses the hooks and attempts direct heap writes,
+PostgreSQL's own internal read-only checks will catch it.
+The setting is applied without writing any session-level
+GUC, so it leaves no state behind and does not interfere
+with connection poolers.
 
 ## Example
 
