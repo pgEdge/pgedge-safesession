@@ -18,3 +18,14 @@ REGRESS_OPTS = --inputdir=test
 PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# Convenience aliases referenced by the contributor guide. "test" runs the
+# regression suite against a running server (the extension must be in that
+# server's shared_preload_libraries). "lint" is a clean rebuild, so the
+# PGXS warning set is applied to every file.
+.PHONY: test lint
+test: installcheck
+
+lint:
+	$(MAKE) clean
+	$(MAKE) all
