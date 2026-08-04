@@ -27,6 +27,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
@@ -366,6 +367,82 @@ query_has_blocked_function(Query *query)
 }
 
 /*
+ * Cache of the configured roles resolved to OIDs.
+ *
+ * current_role_is_restricted() runs on every statement, and re-parsing
+ * the GUC string and resolving each name to an OID each time is the bulk
+ * of the cost. The resolved OID list changes only when the GUC changes or
+ * when pg_authid changes (a role created, dropped or renamed), so cache
+ * it and rebuild lazily after either of those. Membership is not cached
+ * here: is_member_of_role() is checked per call against the live
+ * session/current user and is itself cached and invalidated by core.
+ *
+ * The list lives in CacheMemoryContext so it survives across statements.
+ */
+static List *cached_role_oids = NIL;
+static bool  role_cache_valid = false;
+
+static void
+invalidate_role_cache(Datum arg, int cacheid, uint32 hashvalue)
+{
+    role_cache_valid = false;
+}
+
+static void
+assign_safesession_roles(const char *newval, void *extra)
+{
+    role_cache_valid = false;
+}
+
+/*
+ * Rebuild cached_role_oids from the current GUC value. Must be called
+ * with a valid transaction in progress (it reads the catalog).
+ */
+static void
+rebuild_role_cache(void)
+{
+    char     *rawstring;
+    List     *rolelist;
+    ListCell *lc;
+
+    if (cached_role_oids != NIL)
+    {
+        list_free(cached_role_oids);
+        cached_role_oids = NIL;
+    }
+    role_cache_valid = true;
+
+    if (safesession_roles == NULL || safesession_roles[0] == '\0')
+        return;
+
+    rawstring = pstrdup(safesession_roles);
+    if (!SplitIdentifierString(rawstring, ',', &rolelist))
+    {
+        /* Malformed; the check hook rejects this, so treat as empty. */
+        pfree(rawstring);
+        list_free(rolelist);
+        return;
+    }
+
+    foreach(lc, rolelist)
+    {
+        char *rolename = (char *) lfirst(lc);
+        Oid   roleid = get_role_oid(rolename, true);
+
+        if (OidIsValid(roleid))
+        {
+            MemoryContext old = MemoryContextSwitchTo(CacheMemoryContext);
+
+            cached_role_oids = lappend_oid(cached_role_oids, roleid);
+            MemoryContextSwitchTo(old);
+        }
+    }
+
+    pfree(rawstring);
+    list_free(rolelist);
+}
+
+/*
  * Check whether the current session role is restricted.
  *
  * Returns true if the session user or current user is listed in
@@ -379,8 +456,6 @@ query_has_blocked_function(Query *query)
 static bool
 current_role_is_restricted(void)
 {
-    char       *rawstring;
-    List       *rolelist;
     ListCell   *lc;
     Oid         session_userid;
     Oid         current_userid;
@@ -400,47 +475,27 @@ current_role_is_restricted(void)
     if (superuser_arg(session_userid))
         return false;
 
+    if (!role_cache_valid)
+        rebuild_role_cache();
+
     current_userid = GetUserId();
 
-    /* Parse the comma-delimited role list */
-    rawstring = pstrdup(safesession_roles);
-    if (!SplitIdentifierString(rawstring, ',', &rolelist))
+    foreach(lc, cached_role_oids)
     {
-        pfree(rawstring);
-        return false;
-    }
-
-    foreach(lc, rolelist)
-    {
-        char   *rolename = (char *) lfirst(lc);
-        Oid     roleid;
-
-        roleid = get_role_oid(rolename, true);
-        if (!OidIsValid(roleid))
-            continue;
+        Oid roleid = lfirst_oid(lc);
 
         /* Check session user */
         if (session_userid == roleid ||
             is_member_of_role(session_userid, roleid))
-        {
-            pfree(rawstring);
-            list_free(rolelist);
             return true;
-        }
 
         /* Check current user (in case SET ROLE was used) */
         if (current_userid != session_userid &&
             (current_userid == roleid ||
              is_member_of_role(current_userid, roleid)))
-        {
-            pfree(rawstring);
-            list_free(rolelist);
             return true;
-        }
     }
 
-    pfree(rawstring);
-    list_free(rolelist);
     return false;
 }
 
@@ -1055,7 +1110,7 @@ _PG_init(void)
         PGC_SUSET,
         0,
         check_safesession_roles,
-        NULL,
+        assign_safesession_roles,
         NULL);
 
     DefineCustomBoolVariable(
@@ -1125,6 +1180,14 @@ _PG_init(void)
     /* Install post_parse_analyze hook (blocked function detection) */
     prev_post_parse_analyze = post_parse_analyze_hook;
     post_parse_analyze_hook = safesession_post_parse_analyze;
+
+    /*
+     * Invalidate the cached role-OID list when pg_authid changes (a role
+     * created, dropped or renamed). GUC changes are handled by the assign
+     * hook.
+     */
+    CacheRegisterSyscacheCallback(AUTHOID, invalidate_role_cache,
+                                  (Datum) 0);
 
 #if PG_VERSION_NUM >= 150000
     MarkGUCPrefixReserved("pgedge_safesession");
