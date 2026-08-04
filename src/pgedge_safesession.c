@@ -20,6 +20,7 @@
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "parser/analyze.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -44,24 +45,26 @@ static bool read_only_guc_set = false;
 /* Saved hook values */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
+static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 
 /* Function declarations */
 void _PG_init(void);
 
 /*
- * Check if a function OID refers to a blocked C-language
- * function.
+ * Policy: does this function OID refer to a function that a restricted
+ * session must not be allowed to execute?
  *
- * When block_all_c_functions is false (default), only
- * VOLATILE C functions are blocked. IMMUTABLE and STABLE
- * C functions (e.g., PostGIS geometry ops, pgvector distance
- * ops) are allowed since they promise no side effects.
- *
- * When block_all_c_functions is true, all C-language
+ * When block_all_c_functions is false (default), only VOLATILE C
+ * functions are blocked. IMMUTABLE and STABLE C functions (e.g., PostGIS
+ * geometry ops, pgvector distance ops) are allowed since they promise no
+ * side effects. When block_all_c_functions is true, all C-language
  * functions are blocked regardless of volatility.
+ *
+ * The signature matches check_function_callback so this can be handed to
+ * check_functions_in_node().
  */
 static bool
-is_c_language_function(Oid funcid)
+function_is_blocked(Oid funcid, void *context)
 {
     HeapTuple    proctup;
     Form_pg_proc procform;
@@ -88,124 +91,39 @@ is_c_language_function(Oid funcid)
 }
 
 /*
- * Recursively walk an expression tree looking for C-language
- * function calls.
+ * Walk a parse-analysed Query, and everything reachable from it
+ * (subqueries, CTEs, set operations, join and index quals, aggregates,
+ * window functions, ScalarArrayOpExpr, and so on), looking for a
+ * function that function_is_blocked() rejects.
+ *
+ * check_functions_in_node() enumerates every function-bearing node type,
+ * so this covers the whole statement rather than a hand-picked set of
+ * plan fields, and does not need revisiting when a new node type or plan
+ * shape is added.
  */
 static bool
-contains_c_function_walker(Node *node, void *context)
+query_has_blocked_function_walker(Node *node, void *context)
 {
     if (node == NULL)
         return false;
 
-    if (IsA(node, FuncExpr))
-    {
-        FuncExpr *fexpr = (FuncExpr *) node;
-        if (is_c_language_function(fexpr->funcid))
-            return true;
-    }
-    else if (IsA(node, OpExpr))
-    {
-        OpExpr *opexpr = (OpExpr *) node;
-        if (is_c_language_function(opexpr->opfuncid))
-            return true;
-    }
+    if (check_functions_in_node(node, function_is_blocked, context))
+        return true;
+
+    if (IsA(node, Query))
+        return query_tree_walker((Query *) node,
+                                 query_has_blocked_function_walker,
+                                 context, 0);
 
     return expression_tree_walker(node,
-                                  contains_c_function_walker,
+                                  query_has_blocked_function_walker,
                                   context);
 }
 
-/*
- * Recursively walk a Plan tree checking all nodes for
- * C-language function calls. Unlike just checking the
- * top-level targetlist/qual, this visits every plan node
- * including join conditions, hash clauses, index quals,
- * sort expressions, etc.
- */
 static bool
-plan_walker_check_c_functions(Plan *plan)
+query_has_blocked_function(Query *query)
 {
-    ListCell *lc;
-
-    if (plan == NULL)
-        return false;
-
-    /* Check this node's targetlist and qual */
-    if (expression_tree_walker(
-            (Node *) plan->targetlist,
-            contains_c_function_walker, NULL))
-        return true;
-
-    if (expression_tree_walker(
-            (Node *) plan->qual,
-            contains_c_function_walker, NULL))
-        return true;
-
-    /* Check initPlan expressions */
-    if (expression_tree_walker(
-            (Node *) plan->initPlan,
-            contains_c_function_walker, NULL))
-        return true;
-
-    /* Recurse into child plan nodes */
-    if (plan_walker_check_c_functions(
-            innerPlan(plan)))
-        return true;
-
-    if (plan_walker_check_c_functions(
-            outerPlan(plan)))
-        return true;
-
-    /* Check any additional plans in Append, MergeAppend, etc. */
-    if (IsA(plan, Append))
-    {
-        foreach(lc, ((Append *) plan)->appendplans)
-        {
-            if (plan_walker_check_c_functions(
-                    (Plan *) lfirst(lc)))
-                return true;
-        }
-    }
-    else if (IsA(plan, MergeAppend))
-    {
-        foreach(lc, ((MergeAppend *) plan)->mergeplans)
-        {
-            if (plan_walker_check_c_functions(
-                    (Plan *) lfirst(lc)))
-                return true;
-        }
-    }
-    else if (IsA(plan, SubqueryScan))
-    {
-        if (plan_walker_check_c_functions(
-                ((SubqueryScan *) plan)->subplan))
-            return true;
-    }
-
-    return false;
-}
-
-/*
- * Check if a planned statement contains calls to C-language
- * functions anywhere in the plan tree or subplans.
- */
-static bool
-plan_contains_c_functions(PlannedStmt *pstmt)
-{
-    ListCell *lc;
-
-    if (plan_walker_check_c_functions(pstmt->planTree))
-        return true;
-
-    /* Check all subplans (CTEs, SubLinks, etc.) */
-    foreach(lc, pstmt->subplans)
-    {
-        if (plan_walker_check_c_functions(
-                (Plan *) lfirst(lc)))
-            return true;
-    }
-
-    return false;
+    return query_has_blocked_function_walker((Node *) query, NULL);
 }
 
 /*
@@ -327,8 +245,9 @@ manage_read_only_state(bool is_restricted)
 }
 
 /*
- * ExecutorStart hook: block DML and C-language functions
- * for restricted roles.
+ * ExecutorStart hook: block DML (including data-modifying CTEs) for
+ * restricted roles. Blocked function calls are handled earlier, in the
+ * post_parse_analyze hook.
  */
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
@@ -402,16 +321,6 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
                                 " WITH clause in a read-only"
                                 " session")));
         }
-
-        /* Block C-language function calls */
-        if (safesession_block_c_functions &&
-            plan_contains_c_functions(pstmt))
-            ereport(ERROR,
-                    (errcode(
-                        ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                     errmsg("cannot execute C language"
-                            " functions in a"
-                            " read-only session")));
     }
 
     /* Chain to previous hook or standard function */
@@ -419,6 +328,37 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
         prev_ExecutorStart(queryDesc, eflags);
     else
         standard_ExecutorStart(queryDesc, eflags);
+}
+
+/*
+ * post_parse_analyze hook: block statements that call a function a
+ * restricted session must not run. Working from the analysed Query
+ * rather than the plan lets us examine every function the statement
+ * references, wherever it ends up in the plan tree.
+ */
+static void
+safesession_post_parse_analyze(ParseState *pstate, Query *query
+#if PG_VERSION_NUM >= 150000
+                               , JumbleState *jstate
+#endif
+                               )
+{
+    if (prev_post_parse_analyze)
+        prev_post_parse_analyze(pstate, query
+#if PG_VERSION_NUM >= 150000
+                                , jstate
+#endif
+                                );
+
+    if (safesession_block_c_functions &&
+        IsTransactionState() &&
+        current_role_is_restricted() &&
+        query_has_blocked_function(query))
+        ereport(ERROR,
+                (errcode(
+                    ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                 errmsg("cannot execute functions that may have"
+                        " side effects in a read-only session")));
 }
 
 /*
@@ -849,6 +789,10 @@ _PG_init(void)
     /* Install ProcessUtility hook */
     prev_ProcessUtility = ProcessUtility_hook;
     ProcessUtility_hook = safesession_ProcessUtility;
+
+    /* Install post_parse_analyze hook (blocked function detection) */
+    prev_post_parse_analyze = post_parse_analyze_hook;
+    post_parse_analyze_hook = safesession_post_parse_analyze;
 
 #if PG_VERSION_NUM >= 150000
     MarkGUCPrefixReserved("pgedge_safesession");
