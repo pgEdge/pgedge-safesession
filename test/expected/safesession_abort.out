@@ -43,6 +43,7 @@ SET SESSION AUTHORIZATION safesession_abort;
 -- Enforcement is active for this role
 INSERT INTO test_abort VALUES (2);
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- ROLLBACK after an error must succeed without crashing the backend
 BEGIN;
 SELECT 1/0;
@@ -62,6 +63,7 @@ SELECT count(*) FROM test_abort;
 
 INSERT INTO test_abort VALUES (3);
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup

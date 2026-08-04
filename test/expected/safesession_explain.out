@@ -67,16 +67,21 @@ EXPLAIN (ANALYZE false, COSTS OFF) SELECT * INTO should_not_exist2 FROM test_exp
 -- EXPLAIN ANALYZE of a write must be blocked, in every spelling
 EXPLAIN (ANALYZE) CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
 ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 EXPLAIN ANALYZE CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
 ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 EXPLAIN (ANALYZE) SELECT * INTO into_blocked FROM test_explain;
 ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 EXPLAIN (ANALYZE) CREATE MATERIALIZED VIEW mv_blocked AS SELECT * FROM test_explain;
 ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- A repeated option takes its last value, exactly as PostgreSQL reads it,
 -- so this one does execute and must be blocked
 EXPLAIN (ANALYZE off, ANALYZE on) CREATE TABLE ctas_repeat AS SELECT * FROM test_explain;
 ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- The same spelling the other way round only plans, and is allowed
 EXPLAIN (ANALYZE on, ANALYZE off, COSTS OFF)
     CREATE TABLE should_not_exist3 AS SELECT * FROM test_explain;
@@ -89,6 +94,7 @@ EXPLAIN (ANALYZE on, ANALYZE off, COSTS OFF)
 -- which is why it is not handled in the utility hook
 EXPLAIN (ANALYZE) INSERT INTO test_explain VALUES (3);
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- The check must not depend on block_ddl: PostgreSQL refuses the plain
 -- statement in a read-only transaction whatever our toggles say, so the
 -- EXPLAIN path must not end up weaker than it
@@ -98,6 +104,7 @@ SET pgedge_safesession.block_ddl = off;
 SET SESSION AUTHORIZATION safesession_explain;
 EXPLAIN (ANALYZE) CREATE TABLE ctas_no_ddl_block AS SELECT * FROM test_explain;
 ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser to check the outcome
 RESET SESSION AUTHORIZATION;
 RESET pgedge_safesession.block_ddl;

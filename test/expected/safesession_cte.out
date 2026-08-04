@@ -51,16 +51,20 @@ WITH c AS (SELECT * FROM test_cte) SELECT count(*) FROM c;
 WITH c AS (INSERT INTO test_cte VALUES (2, 'cte') RETURNING *)
     SELECT * FROM c;
 ERROR:  cannot execute a data-modifying WITH clause in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 WITH c AS (UPDATE test_cte SET val = 'changed' RETURNING *)
     SELECT count(*) FROM c;
 ERROR:  cannot execute a data-modifying WITH clause in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 WITH c AS (DELETE FROM test_cte RETURNING *)
     SELECT count(*) FROM c;
 ERROR:  cannot execute a data-modifying WITH clause in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- EXPLAIN ANALYZE of a data-modifying CTE executes it too, so it is blocked
 EXPLAIN (ANALYZE) WITH c AS (INSERT INTO test_cte VALUES (3, 'ea') RETURNING *)
     SELECT * FROM c;
 ERROR:  cannot execute a data-modifying WITH clause in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser to check the outcome
 RESET SESSION AUTHORIZATION;
 -- Nothing should have changed: still just the seed row

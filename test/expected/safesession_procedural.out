@@ -54,7 +54,8 @@ SELECT pg_sleep(0.5);
 SET SESSION AUTHORIZATION safesession_proc;
 -- CHECKPOINT is not read-only and must be blocked
 CHECKPOINT;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CHECKPOINT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- A DO block in a trusted language is allowed
 DO $$ BEGIN PERFORM 1; END $$;
 -- CALL of a read-only trusted procedure is allowed
@@ -63,6 +64,7 @@ CALL proc_read();
 -- it is caught by the read-only floor
 CALL proc_write();
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CONTEXT:  SQL statement "INSERT INTO test_proc VALUES (2)"
 PL/pgSQL function proc_write() line 3 at SQL statement
 -- The arguments of a CALL are evaluated before the procedure body runs,

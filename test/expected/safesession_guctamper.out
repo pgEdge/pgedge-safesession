@@ -36,20 +36,26 @@ SET SESSION AUTHORIZATION safesession_guctamper;
 -- Attempts to relax read-only must all be blocked
 SET transaction_read_only = off;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 SET default_transaction_read_only = off;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 RESET transaction_read_only;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 BEGIN;
 SET TRANSACTION READ WRITE;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 ROLLBACK;
 -- Setting transaction_read_only = on is also treated as protected, for
 -- consistency: the value is not honoured by SafeSession's own enforcement
 SET transaction_read_only = on;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Unrelated GUCs and more-restrictive settings are allowed
 SET work_mem = '4MB';
 RESET work_mem;

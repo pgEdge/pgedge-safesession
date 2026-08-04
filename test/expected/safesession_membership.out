@@ -57,6 +57,7 @@ SELECT * FROM test_membership ORDER BY id;
 -- INSERT should be blocked (member of restricted role)
 INSERT INTO test_membership VALUES (2, 'blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back
 RESET SESSION AUTHORIZATION;
 -- Test: superuser member should NOT be restricted
