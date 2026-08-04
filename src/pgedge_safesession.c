@@ -9,7 +9,9 @@
  */
 #include "postgres.h"
 
+#include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/pg_aggregate.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
 #include "commands/copy.h"
@@ -51,14 +53,165 @@ static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 void _PG_init(void);
 
 /*
+ * A curated list of side-effecting built-in (pg_catalog) functions.
+ *
+ * These are language-internal, so they are not caught by the
+ * volatile-user-function rule in function_is_blocked(), but a restricted
+ * session must not be able to call them: they write (sequences, large
+ * objects), read from the filesystem, change configuration, signal other
+ * backends, drive replication or take cross-session locks. The list is
+ * matched by name against built-in functions only. It is deliberately
+ * conservative rather than exhaustive; most of these are also
+ * superuser-gated by default, so this is largely defence in depth (the
+ * exceptions, such as the advisory-lock and sequence functions, are
+ * executable by ordinary roles).
+ */
+static const char *const dangerous_builtins[] = {
+    "lo_export",
+    "lo_import",
+    "nextval",
+    "pg_advisory_lock",
+    "pg_advisory_lock_shared",
+    "pg_advisory_unlock",
+    "pg_advisory_unlock_all",
+    "pg_advisory_unlock_shared",
+    "pg_advisory_xact_lock",
+    "pg_advisory_xact_lock_shared",
+    "pg_backup_start",
+    "pg_backup_stop",
+    "pg_cancel_backend",
+    "pg_create_logical_replication_slot",
+    "pg_create_physical_replication_slot",
+    "pg_create_restore_point",
+    "pg_drop_replication_slot",
+    "pg_logical_emit_message",
+    "pg_ls_dir",
+    "pg_promote",
+    "pg_read_binary_file",
+    "pg_read_file",
+    "pg_reload_conf",
+    "pg_replication_origin_advance",
+    "pg_replication_origin_session_setup",
+    "pg_stat_file",
+    "pg_stat_reset",
+    "pg_stat_reset_shared",
+    "pg_switch_wal",
+    "pg_terminate_backend",
+    "pg_try_advisory_lock",
+    "pg_try_advisory_lock_shared",
+    "pg_try_advisory_xact_lock",
+    "pg_try_advisory_xact_lock_shared",
+    "set_config",
+    "setval",
+};
+
+static bool
+name_is_dangerous_builtin(const char *proname)
+{
+    int i;
+
+    for (i = 0; i < lengthof(dangerous_builtins); i++)
+    {
+        if (strcmp(proname, dangerous_builtins[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool function_is_blocked(Oid funcid, void *context);
+
+/*
+ * Is this function's language "trusted", i.e. does its body run its work
+ * as SQL through the executor?
+ *
+ * SQL and the trusted procedural languages (PL/pgSQL, trusted PL/Perl,
+ * ...) all have lanpltrusted set. Any write they perform, and any
+ * dangerous function they call in turn, is caught downstream by the
+ * executor hook and by this same post_parse_analyze check running again
+ * on their inner statements, so their calls need not be blocked up front.
+ * C, internal and untrusted PLs (plpython3u, plperlu, ...) can act
+ * natively, outside anything we can observe, and are treated as
+ * potentially side-effecting.
+ */
+static bool
+language_is_trusted(Oid prolang)
+{
+    HeapTuple        langtup;
+    Form_pg_language lang;
+    bool             trusted;
+
+    langtup = SearchSysCache1(LANGOID, ObjectIdGetDatum(prolang));
+    if (!HeapTupleIsValid(langtup))
+        return false;   /* unknown language: treat as untrusted */
+
+    lang = (Form_pg_language) GETSTRUCT(langtup);
+    trusted = lang->lanpltrusted;
+    ReleaseSysCache(langtup);
+    return trusted;
+}
+
+/*
+ * An aggregate carries its own volatility in pg_proc, which need not match
+ * that of its underlying support functions: CREATE AGGREGATE happily
+ * leaves an aggregate marked IMMUTABLE even when its transition function
+ * is VOLATILE. A query references only the aggregate, so checking the
+ * aggregate's OID alone would let a volatile transition (or final, etc.)
+ * function run unnoticed. Expand the aggregate to its support functions
+ * and check each of them.
+ */
+static bool
+aggregate_support_is_blocked(Oid aggfnoid)
+{
+    HeapTuple          aggtup;
+    Form_pg_aggregate  agg;
+    bool               result = false;
+
+    aggtup = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(aggfnoid));
+    if (!HeapTupleIsValid(aggtup))
+        return false;
+
+    agg = (Form_pg_aggregate) GETSTRUCT(aggtup);
+
+    if ((OidIsValid(agg->aggtransfn) &&
+         function_is_blocked(agg->aggtransfn, NULL)) ||
+        (OidIsValid(agg->aggfinalfn) &&
+         function_is_blocked(agg->aggfinalfn, NULL)) ||
+        (OidIsValid(agg->aggcombinefn) &&
+         function_is_blocked(agg->aggcombinefn, NULL)) ||
+        (OidIsValid(agg->aggserialfn) &&
+         function_is_blocked(agg->aggserialfn, NULL)) ||
+        (OidIsValid(agg->aggdeserialfn) &&
+         function_is_blocked(agg->aggdeserialfn, NULL)) ||
+        (OidIsValid(agg->aggmtransfn) &&
+         function_is_blocked(agg->aggmtransfn, NULL)) ||
+        (OidIsValid(agg->aggminvtransfn) &&
+         function_is_blocked(agg->aggminvtransfn, NULL)) ||
+        (OidIsValid(agg->aggmfinalfn) &&
+         function_is_blocked(agg->aggmfinalfn, NULL)))
+        result = true;
+
+    ReleaseSysCache(aggtup);
+    return result;
+}
+
+/*
  * Policy: does this function OID refer to a function that a restricted
  * session must not be allowed to execute?
  *
- * When block_all_c_functions is false (default), only VOLATILE C
- * functions are blocked. IMMUTABLE and STABLE C functions (e.g., PostGIS
- * geometry ops, pgvector distance ops) are allowed since they promise no
- * side effects. When block_all_c_functions is true, all C-language
- * functions are blocked regardless of volatility.
+ * A function is blocked when it is either:
+ *   - a user or extension function (OID >= FirstNormalObjectId) that is
+ *     marked VOLATILE and written in an untrusted language (C, internal
+ *     or an untrusted PL), i.e. one that may have side effects we cannot
+ *     otherwise observe. STABLE and IMMUTABLE functions, and functions in
+ *     trusted languages (SQL, PL/pgSQL, ...) whose writes are caught
+ *     downstream, are allowed; or
+ *   - one of a curated set of side-effecting built-ins (see
+ *     dangerous_builtins), which are language-internal and so would not
+ *     be flagged by the rule above.
+ *
+ * Harmless volatile built-ins such as random() and clock_timestamp() are
+ * deliberately allowed. Separately, when block_all_c_functions is set,
+ * every C-language function is blocked regardless of volatility.
  *
  * The signature matches check_function_callback so this can be handed to
  * check_functions_in_node().
@@ -68,25 +221,40 @@ function_is_blocked(Oid funcid, void *context)
 {
     HeapTuple    proctup;
     Form_pg_proc procform;
-    bool         result = false;
+    bool         result;
+    char         prokind;
+    char         provolatile;
+    Oid          prolang;
+    bool         is_builtin;
+    NameData     proname;
 
-    proctup = SearchSysCache1(PROCOID,
-                              ObjectIdGetDatum(funcid));
+    proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
     if (!HeapTupleIsValid(proctup))
         return false;
 
     procform = (Form_pg_proc) GETSTRUCT(proctup);
-
-    if (procform->prolang == ClanguageId)
-    {
-        if (safesession_block_all_c_functions)
-            result = true;
-        else
-            result = (procform->provolatile ==
-                      PROVOLATILE_VOLATILE);
-    }
-
+    prokind = procform->prokind;
+    provolatile = procform->provolatile;
+    prolang = procform->prolang;
+    proname = procform->proname;
+    is_builtin = (funcid < FirstNormalObjectId);
     ReleaseSysCache(proctup);
+
+    if (safesession_block_all_c_functions && prolang == ClanguageId)
+        result = true;
+    else if (is_builtin)
+        result = name_is_dangerous_builtin(NameStr(proname));
+    else
+        result = (provolatile == PROVOLATILE_VOLATILE) &&
+                 !language_is_trusted(prolang);
+
+    /*
+     * An aggregate's declared volatility need not reflect its support
+     * functions, so also check those (see aggregate_support_is_blocked).
+     */
+    if (!result && prokind == PROKIND_AGGREGATE)
+        result = aggregate_support_is_blocked(funcid);
+
     return result;
 }
 
@@ -338,14 +506,14 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
  */
 static void
 safesession_post_parse_analyze(ParseState *pstate, Query *query
-#if PG_VERSION_NUM >= 150000
+#if PG_VERSION_NUM >= 140000
                                , JumbleState *jstate
 #endif
                                )
 {
     if (prev_post_parse_analyze)
         prev_post_parse_analyze(pstate, query
-#if PG_VERSION_NUM >= 150000
+#if PG_VERSION_NUM >= 140000
                                 , jstate
 #endif
                                 );
@@ -741,9 +909,10 @@ _PG_init(void)
 
     DefineCustomBoolVariable(
         "pgedge_safesession.block_c_functions",
-        "Block C-language function execution for "
-        "restricted roles. By default only volatile "
-        "C functions are blocked.",
+        "Block execution of functions that may have side "
+        "effects for restricted roles: volatile user or "
+        "extension functions, plus a set of side-effecting "
+        "built-ins.",
         NULL,
         &safesession_block_c_functions,
         true,
@@ -755,10 +924,10 @@ _PG_init(void)
 
     DefineCustomBoolVariable(
         "pgedge_safesession.block_all_c_functions",
-        "Block all C-language functions regardless of "
-        "volatility. When off, only volatile C functions "
-        "are blocked. Only applies when block_c_functions "
-        "is on.",
+        "Additionally block every C-language function "
+        "regardless of volatility. This can break read-only "
+        "extension functions (e.g. PostGIS, pgvector). Only "
+        "applies when block_c_functions is on.",
         NULL,
         &safesession_block_all_c_functions,
         false,
