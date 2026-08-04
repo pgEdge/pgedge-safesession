@@ -12,7 +12,7 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_prepared safesession_guctamper \
           safesession_rolescheck safesession_procedural \
           safesession_rolecache safesession_status
-REGRESS_OPTS = --inputdir=test --temp-config test/safesession.conf
+REGRESS_OPTS = --inputdir=test
 
 PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

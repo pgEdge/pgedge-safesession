@@ -65,9 +65,7 @@ GRANT EXECUTE ON FUNCTION func_sql_read()
     TO safesession_readonly;
 
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_readonly';
 
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
@@ -88,8 +86,7 @@ SELECT func_sql_write();
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP FUNCTION func_write();
 DROP FUNCTION func_read();
 DROP FUNCTION func_sql_write();

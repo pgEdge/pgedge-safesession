@@ -20,9 +20,7 @@ CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 
 CREATE ROLE safesession_status LOGIN;
 
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_status';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_status';
 
 -- A superuser session is never restricted
 SELECT pgedge_safesession_is_restricted();
@@ -33,7 +31,6 @@ SELECT pgedge_safesession_is_restricted();
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP ROLE safesession_status;
 DROP EXTENSION pgedge_safesession;

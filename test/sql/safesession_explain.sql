@@ -32,9 +32,7 @@ GRANT SELECT ON test_explain TO safesession_explain;
 GRANT CREATE ON SCHEMA public TO safesession_explain;
 
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_explain';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_explain';
 
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_explain;
@@ -90,8 +88,7 @@ SELECT count(*) AS leaked_objects
 SELECT count(*) AS test_explain_rows FROM test_explain;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 REVOKE ALL ON SCHEMA public FROM safesession_explain;
 DROP TABLE test_explain;
 DROP ROLE safesession_explain;

@@ -24,19 +24,7 @@ DROP ROLE IF EXISTS safesession_2pc;
 NOTICE:  role "safesession_2pc" does not exist, skipping
 CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 CREATE ROLE safesession_2pc LOGIN;
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_2pc';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_2pc';
 SET SESSION AUTHORIZATION safesession_2pc;
 -- Two-phase commit statements must all be blocked
 COMMIT PREPARED 'nosuch';
@@ -69,12 +57,6 @@ DEALLOCATE myplan;
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP ROLE safesession_2pc;
 DROP EXTENSION pgedge_safesession;

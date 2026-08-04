@@ -27,9 +27,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON test_advanced
     TO safesession_adv;
 
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_adv';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_adv';
 
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_adv;
@@ -70,8 +68,7 @@ COMMIT;
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_advanced;
 DROP ROLE safesession_adv;
 DROP EXTENSION pgedge_safesession;

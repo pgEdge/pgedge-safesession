@@ -29,19 +29,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON test_gucs
     TO safesession_guc_test;
 GRANT CREATE ON SCHEMA public TO safesession_guc_test;
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_guc_test';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_guc_test';
 -- ============================================================
 -- All protections on: SafeSession's own checks fire
 -- ============================================================
@@ -58,71 +46,23 @@ RESET SESSION AUTHORIZATION;
 -- SafeSession's DML check is skipped, but the write is still
 -- rejected by the read-only transaction floor.
 -- ============================================================
-ALTER SYSTEM SET pgedge_safesession.block_dml = off;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.block_dml = off;
 SET SESSION AUTHORIZATION safesession_guc_test;
 INSERT INTO test_gucs VALUES (4, 'still_blocked');
 ERROR:  cannot execute INSERT in a read-only transaction
 RESET SESSION AUTHORIZATION;
-ALTER SYSTEM SET pgedge_safesession.block_dml = on;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.block_dml = on;
 -- ============================================================
 -- Test 2: block_ddl = off
 -- SafeSession's utility check is skipped, but ordinary DDL is
 -- still rejected by the read-only transaction floor.
 -- ============================================================
-ALTER SYSTEM SET pgedge_safesession.block_ddl = off;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.block_ddl = off;
 SET SESSION AUTHORIZATION safesession_guc_test;
 CREATE TABLE test_gucs_temp (id int);
 ERROR:  cannot execute CREATE TABLE in a read-only transaction
 RESET SESSION AUTHORIZATION;
-ALTER SYSTEM SET pgedge_safesession.block_ddl = on;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.block_ddl = on;
 -- Nothing above should have modified the table
 SET default_transaction_read_only = off;
 SELECT * FROM test_gucs ORDER BY id;
@@ -136,17 +76,11 @@ SELECT * FROM test_gucs ORDER BY id;
 -- Cleanup
 -- ============================================================
 RESET SESSION AUTHORIZATION;
-ALTER SYSTEM RESET pgedge_safesession.roles;
-ALTER SYSTEM RESET pgedge_safesession.block_dml;
-ALTER SYSTEM RESET pgedge_safesession.block_ddl;
-ALTER SYSTEM RESET pgedge_safesession.block_c_functions;
-ALTER SYSTEM RESET pgedge_safesession.block_all_c_functions;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
+RESET pgedge_safesession.block_dml;
+RESET pgedge_safesession.block_ddl;
+RESET pgedge_safesession.block_c_functions;
+RESET pgedge_safesession.block_all_c_functions;
 REVOKE CREATE ON SCHEMA public FROM safesession_guc_test;
 DROP TABLE test_gucs;
 DROP ROLE safesession_guc_test;

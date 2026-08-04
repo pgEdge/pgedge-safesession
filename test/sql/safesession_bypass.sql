@@ -31,9 +31,7 @@ GRANT ALL ON test_bypass TO safesession_unrestricted;
 GRANT safesession_unrestricted TO safesession_readonly;
 
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_readonly';
 
 -- Connect as restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
@@ -59,8 +57,7 @@ INSERT INTO test_bypass VALUES (2, 'still_blocked');
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_bypass;
 REVOKE safesession_unrestricted FROM safesession_readonly;
 DROP ROLE safesession_unrestricted;

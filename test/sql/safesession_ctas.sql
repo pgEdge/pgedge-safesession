@@ -27,9 +27,7 @@ GRANT SELECT ON test_ctas_src TO safesession_readonly;
 GRANT CREATE ON SCHEMA public TO safesession_readonly;
 
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_readonly';
 
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
@@ -47,8 +45,7 @@ SELECT * FROM test_ctas_src ORDER BY id;
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 REVOKE CREATE ON SCHEMA public FROM safesession_readonly;
 DROP TABLE test_ctas_src;
 DROP ROLE safesession_readonly;

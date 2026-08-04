@@ -23,9 +23,7 @@ CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 
 CREATE ROLE safesession_guctamper LOGIN;
 
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_guctamper';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_guctamper';
 
 SET SESSION AUTHORIZATION safesession_guctamper;
 
@@ -54,7 +52,6 @@ SHOW transaction_read_only;
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP ROLE safesession_guctamper;
 DROP EXTENSION pgedge_safesession;
