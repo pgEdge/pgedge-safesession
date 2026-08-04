@@ -1,0 +1,99 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- EXPLAIN tests for pgEdge SafeSession
+-- Plain EXPLAIN only plans and must be allowed, but EXPLAIN ANALYZE
+-- executes the statement. Writes carried as an intoClause (CREATE TABLE
+-- AS, CREATE MATERIALIZED VIEW AS, SELECT INTO) must be blocked, because
+-- they never reach the DML check in the executor hook as a top-level
+-- INSERT/UPDATE/DELETE.
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP TABLE IF EXISTS test_explain;
+NOTICE:  table "test_explain" does not exist, skipping
+DROP ROLE IF EXISTS safesession_explain;
+NOTICE:  role "safesession_explain" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE ROLE safesession_explain LOGIN;
+CREATE TABLE test_explain (id int);
+INSERT INTO test_explain VALUES (1), (2);
+GRANT SELECT ON test_explain TO safesession_explain;
+-- Grant CREATE so the write is what fails, not a schema permission check
+-- (public loses its default CREATE grant on PostgreSQL 15+).
+GRANT CREATE ON SCHEMA public TO safesession_explain;
+-- Configure the restricted role
+ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_explain';
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep(0.5);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+-- Switch to the restricted role (changes the session user)
+SET SESSION AUTHORIZATION safesession_explain;
+-- Plain EXPLAIN only plans; allowed (COSTS OFF for deterministic output)
+EXPLAIN (COSTS OFF) SELECT * FROM test_explain;
+        QUERY PLAN        
+--------------------------
+ Seq Scan on test_explain
+(1 row)
+
+-- EXPLAIN of a writing statement without ANALYZE only plans; allowed
+EXPLAIN (COSTS OFF) CREATE TABLE should_not_exist AS SELECT * FROM test_explain;
+        QUERY PLAN        
+--------------------------
+ Seq Scan on test_explain
+(1 row)
+
+EXPLAIN (ANALYZE false, COSTS OFF) SELECT * INTO should_not_exist2 FROM test_explain;
+        QUERY PLAN        
+--------------------------
+ Seq Scan on test_explain
+(1 row)
+
+-- EXPLAIN ANALYZE of a write must be blocked, in every spelling
+EXPLAIN (ANALYZE) CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
+ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+EXPLAIN ANALYZE CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
+ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+EXPLAIN (ANALYZE) SELECT * INTO into_blocked FROM test_explain;
+ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+EXPLAIN (ANALYZE) CREATE MATERIALIZED VIEW mv_blocked AS SELECT * FROM test_explain;
+ERROR:  cannot execute EXPLAIN ANALYZE of a writing statement in a read-only session
+-- Switch back to superuser to check the outcome
+RESET SESSION AUTHORIZATION;
+-- None of the tables or the materialized view should have been created
+SET default_transaction_read_only = off;
+SELECT count(*) AS leaked_objects
+    FROM pg_class
+    WHERE relname IN ('ctas_blocked', 'into_blocked', 'mv_blocked',
+                      'should_not_exist', 'should_not_exist2');
+ leaked_objects 
+----------------
+              0
+(1 row)
+
+-- Cleanup
+ALTER SYSTEM RESET pgedge_safesession.roles;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+REVOKE ALL ON SCHEMA public FROM safesession_explain;
+DROP TABLE test_explain;
+DROP ROLE safesession_explain;
+DROP EXTENSION pgedge_safesession;
