@@ -885,6 +885,54 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
 }
 
 /*
+ * GUC check hook for pgedge_safesession.roles.
+ *
+ * Validates the list at assignment time so that a misconfiguration is
+ * surfaced then, rather than silently disabling all protection. A list
+ * that does not parse is rejected outright. Names that do not resolve to
+ * a role draw a WARNING, but only when we can safely read the catalog:
+ * at postmaster start and during a SIGHUP reload there is no transaction,
+ * so name resolution is skipped there (the syntax check still runs).
+ */
+static bool
+check_safesession_roles(char **newval, void **extra, GucSource source)
+{
+    char     *rawstring;
+    List     *rolelist;
+    ListCell *lc;
+
+    if (*newval == NULL || (*newval)[0] == '\0')
+        return true;
+
+    rawstring = pstrdup(*newval);
+
+    if (!SplitIdentifierString(rawstring, ',', &rolelist))
+    {
+        GUC_check_errdetail("List syntax is invalid.");
+        pfree(rawstring);
+        list_free(rolelist);
+        return false;
+    }
+
+    if (IsTransactionState())
+    {
+        foreach(lc, rolelist)
+        {
+            char *rolename = (char *) lfirst(lc);
+
+            if (!OidIsValid(get_role_oid(rolename, true)))
+                ereport(WARNING,
+                        (errmsg("pgedge_safesession.roles: role"
+                                " \"%s\" does not exist", rolename)));
+        }
+    }
+
+    pfree(rawstring);
+    list_free(rolelist);
+    return true;
+}
+
+/*
  * Module initialization
  */
 void
@@ -900,7 +948,7 @@ _PG_init(void)
         "",
         PGC_SUSET,
         0,
-        NULL,
+        check_safesession_roles,
         NULL,
         NULL);
 

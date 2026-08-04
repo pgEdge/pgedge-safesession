@@ -1,0 +1,52 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- Configuration-validation tests for pgEdge SafeSession
+-- The roles list is checked at assignment time so a misconfiguration is
+-- surfaced then, rather than silently disabling all protection: a
+-- malformed list is rejected outright, and a name that does not resolve
+-- to a role draws a WARNING (but is still accepted, as the role may be
+-- created later).
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP ROLE IF EXISTS safesession_realrole;
+NOTICE:  role "safesession_realrole" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE ROLE safesession_realrole;
+-- A valid list of existing roles is accepted silently
+SET pgedge_safesession.roles = 'safesession_realrole';
+SHOW pgedge_safesession.roles;
+ pgedge_safesession.roles 
+--------------------------
+ safesession_realrole
+(1 row)
+
+-- A name that does not resolve draws a WARNING but is still accepted
+SET pgedge_safesession.roles = 'safesession_realrole, nosuchrole';
+WARNING:  pgedge_safesession.roles: role "nosuchrole" does not exist
+SHOW pgedge_safesession.roles;
+     pgedge_safesession.roles     
+----------------------------------
+ safesession_realrole, nosuchrole
+(1 row)
+
+-- A malformed list is rejected outright, leaving the value unchanged
+SET pgedge_safesession.roles = 'safesession_realrole, "oops';
+ERROR:  invalid value for parameter "pgedge_safesession.roles": "safesession_realrole, "oops"
+DETAIL:  List syntax is invalid.
+SHOW pgedge_safesession.roles;
+     pgedge_safesession.roles     
+----------------------------------
+ safesession_realrole, nosuchrole
+(1 row)
+
+-- Cleanup
+RESET pgedge_safesession.roles;
+DROP ROLE safesession_realrole;
+DROP EXTENSION pgedge_safesession;

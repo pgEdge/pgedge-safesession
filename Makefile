@@ -9,7 +9,8 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_secdef safesession_membership \
           safesession_advanced safesession_gucs safesession_abort \
           safesession_explain safesession_cte safesession_walker \
-          safesession_prepared safesession_guctamper
+          safesession_prepared safesession_guctamper \
+          safesession_rolescheck
 REGRESS_OPTS = --inputdir=test --temp-config test/safesession.conf
 
 PG_CONFIG ?= pg_config
