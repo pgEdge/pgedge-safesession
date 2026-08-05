@@ -333,11 +333,23 @@ manage_read_only_state(bool is_restricted)
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
-    bool restricted = current_role_is_restricted();
+    bool restricted = false;
 
-    /* Belt-and-suspenders: manage read-only state */
-    if (safesession_force_read_only)
-        manage_read_only_state(restricted);
+    /*
+     * Only consult the catalog (the role lookups in
+     * current_role_is_restricted()) or touch the read-only GUC
+     * machinery while a valid transaction is in progress. See the
+     * matching guard and fuller rationale in
+     * safesession_ProcessUtility().
+     */
+    if (IsTransactionState())
+    {
+        restricted = current_role_is_restricted();
+
+        /* Belt-and-suspenders: manage read-only state */
+        if (safesession_force_read_only)
+            manage_read_only_state(restricted);
+    }
 
     if (restricted)
     {
@@ -471,11 +483,29 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                            QueryCompletion *qc)
 {
     Node *parsetree = pstmt->utilityStmt;
-    bool  restricted = current_role_is_restricted();
+    bool  restricted = false;
 
-    /* Belt-and-suspenders: manage read-only state */
-    if (safesession_force_read_only)
-        manage_read_only_state(restricted);
+    /*
+     * This hook runs for every utility statement, including COMMIT
+     * and ROLLBACK issued after an error. At that point the
+     * transaction has already been cleaned up: IsTransactionState()
+     * is false, and the role lookups in current_role_is_restricted()
+     * would read the catalog with no active transaction. On an
+     * assert-enabled build that trips an assertion and crashes the
+     * backend (restarting the whole cluster); otherwise it builds a
+     * relcache entry with no snapshot and the behaviour is undefined.
+     * Such statements cannot write, so when there is no valid
+     * transaction we skip enforcement entirely and chain straight
+     * through to standard processing below.
+     */
+    if (IsTransactionState())
+    {
+        restricted = current_role_is_restricted();
+
+        /* Belt-and-suspenders: manage read-only state */
+        if (safesession_force_read_only)
+            manage_read_only_state(restricted);
+    }
 
     if (restricted && parsetree != NULL && safesession_block_ddl)
     {
