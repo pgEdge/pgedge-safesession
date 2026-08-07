@@ -45,6 +45,12 @@ and this project adheres to
 - COPY TO PROGRAM was not explicitly blocked (mitigated by
   PostgreSQL privilege requirements, but added for
   defense-in-depth)
+- Restricted sessions rejected SET of `transaction_read_only`
+  or `default_transaction_read_only` to on, which asks for
+  the state SafeSession already enforces. A client that
+  asserts read-only on each connection it opens, such as a
+  connection pool running with writes disabled, was locked
+  out entirely. Only relaxing either setting is blocked now.
 
 ## [1.0-alpha1] - Unreleased
 
