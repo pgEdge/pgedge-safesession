@@ -17,6 +17,7 @@
 #include "commands/copy.h"
 #include "commands/defrem.h"
 #include "executor/executor.h"
+#include "fmgr.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/nodes.h"
@@ -328,6 +329,9 @@ query_has_blocked_function_walker(Node *node, void *context)
     if (node == NULL)
         return false;
 
+    /* This walker recurses into itself; bound it like core's walkers. */
+    check_stack_depth();
+
     if (check_functions_in_node(node, function_is_blocked, context))
         return true;
 
@@ -405,6 +409,9 @@ rebuild_role_cache(void)
     char     *rawstring;
     List     *rolelist;
     ListCell *lc;
+
+    /* We are about to read the catalog; a transaction must be active. */
+    Assert(IsTransactionState());
 
     if (cached_role_oids != NIL)
     {
@@ -498,6 +505,19 @@ current_role_is_restricted(void)
     }
 
     return false;
+}
+
+/*
+ * SQL-visible introspection: is the current session restricted by
+ * SafeSession? Lets operators and the regression tests ask directly
+ * rather than inferring it from whether a write is rejected.
+ */
+PG_FUNCTION_INFO_V1(pgedge_safesession_is_restricted);
+
+Datum
+pgedge_safesession_is_restricted(PG_FUNCTION_ARGS)
+{
+    PG_RETURN_BOOL(current_role_is_restricted());
 }
 
 /*
