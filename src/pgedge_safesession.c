@@ -710,6 +710,12 @@ is_protected_guc_set(VariableSetStmt *stmt)
         {
             DefElem *opt = (DefElem *) lfirst(lc);
 
+            /*
+             * Plain strcmp is correct here: defname arrives already
+             * lower-cased from the grammar, unlike stmt->name above
+             * (a user-supplied GUC name), which is matched with
+             * pg_strcasecmp.
+             */
             if (strcmp(opt->defname,
                        "transaction_read_only") == 0)
             {
@@ -803,6 +809,16 @@ explained_stmt_writes(Node *query)
 
 /*
  * ProcessUtility hook: block DDL and other write operations.
+ *
+ * This hook is fail-closed: the switch below allows an explicit set of
+ * known-safe utility statements and rejects everything else in its
+ * default branch. A utility statement (in particular a DDL command) that
+ * nobody has considered is therefore denied rather than let through, and
+ * a new statement type added by a future PostgreSQL release is denied
+ * until it is deliberately allowed. Function-call detection, by contrast,
+ * lives in the post_parse_analyze hook and walks the whole query with
+ * check_functions_in_node(), so it does not depend on enumerating plan
+ * shapes and does not have a fail-open default.
  */
 static void
 safesession_ProcessUtility(PlannedStmt *pstmt,
@@ -996,7 +1012,13 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             }
 
             case T_LockStmt:
-                /* Block exclusive locks */
+                /*
+                 * Block lock modes stronger than ROW SHARE. This relies
+                 * on the ordinal ordering of the lock modes: everything
+                 * above RowShareLock (ROW EXCLUSIVE and up) can conflict
+                 * with writers and is rejected; ACCESS SHARE and ROW
+                 * SHARE, which ordinary reads take, remain permitted.
+                 */
                 if (((LockStmt *) parsetree)->mode >
                     RowShareLock)
                     safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
