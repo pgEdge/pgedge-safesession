@@ -36,7 +36,11 @@ CREATE PROCEDURE proc_write() LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO test_proc VALUES (2);
 END $$;
-GRANT EXECUTE ON PROCEDURE proc_read(), proc_write() TO safesession_proc;
+CREATE PROCEDURE proc_arg(t text) LANGUAGE plpgsql AS $$
+BEGIN
+END $$;
+GRANT EXECUTE ON PROCEDURE proc_read(), proc_write(), proc_arg(text)
+    TO safesession_proc;
 
 ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_proc';
 SELECT pg_reload_conf();
@@ -57,6 +61,18 @@ CALL proc_read();
 -- it is caught by the read-only floor
 CALL proc_write();
 
+-- The arguments of a CALL are evaluated before the procedure body runs,
+-- so a blocked function passed as one must be rejected, exactly as it is
+-- when called directly. set_config() escapes the read-only floor (it
+-- changes a GUC rather than writing data), so it would otherwise take
+-- effect.
+SHOW work_mem;
+CALL proc_arg(set_config('work_mem', '55MB', false));
+SHOW work_mem;
+
+-- An ordinary argument is still fine
+CALL proc_arg('plain text');
+
 -- Switch back to superuser to confirm nothing was written
 RESET SESSION AUTHORIZATION;
 SET default_transaction_read_only = off;
@@ -67,6 +83,7 @@ ALTER SYSTEM RESET pgedge_safesession.roles;
 SELECT pg_reload_conf();
 DROP PROCEDURE proc_read();
 DROP PROCEDURE proc_write();
+DROP PROCEDURE proc_arg(text);
 DROP TABLE test_proc;
 DROP ROLE safesession_proc;
 DROP EXTENSION pgedge_safesession;

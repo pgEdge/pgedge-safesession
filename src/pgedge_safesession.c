@@ -330,9 +330,29 @@ query_has_blocked_function_walker(Node *node, void *context)
         return true;
 
     if (IsA(node, Query))
-        return query_tree_walker((Query *) node,
+    {
+        Query *query = (Query *) node;
+
+        /*
+         * query_tree_walker() does not descend into a utility statement,
+         * but CALL evaluates its arguments before the procedure body
+         * runs, and those arguments are ordinary expressions that may
+         * call anything. Since the procedure itself is allowed whenever
+         * its language is trusted, a blocked function passed as an
+         * argument would otherwise execute unexamined.
+         */
+        if (query->commandType == CMD_UTILITY &&
+            query->utilityStmt != NULL &&
+            IsA(query->utilityStmt, CallStmt) &&
+            query_has_blocked_function_walker(
+                (Node *) ((CallStmt *) query->utilityStmt)->funcexpr,
+                context))
+            return true;
+
+        return query_tree_walker(query,
                                  query_has_blocked_function_walker,
                                  context, 0);
+    }
 
     return expression_tree_walker(node,
                                   query_has_blocked_function_walker,
