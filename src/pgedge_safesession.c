@@ -385,6 +385,22 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
                 default:
                     break;
             }
+
+            /*
+             * A data-modifying CTE, e.g.
+             * WITH c AS (INSERT ... RETURNING ...) SELECT * FROM c,
+             * writes even though the top-level command is a SELECT, so
+             * the switch above does not catch it: the ModifyTable node
+             * is buried in the plan tree. PlannedStmt.hasModifyingCTE
+             * flags this directly.
+             */
+            if (pstmt->hasModifyingCTE)
+                ereport(ERROR,
+                        (errcode(
+                            ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                         errmsg("cannot execute a data-modifying"
+                                " WITH clause in a read-only"
+                                " session")));
         }
 
         /* Block C-language function calls */
