@@ -32,6 +32,7 @@
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
+#include "utils/plancache.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -388,16 +389,68 @@ query_has_blocked_function(Query *query)
 static List *cached_role_oids = NIL;
 static bool  role_cache_valid = false;
 
+/*
+ * Whether this session was restricted the last time we looked, as a
+ * tri-state: -1 until the first observation, then 0 or 1.
+ *
+ * The blocked-function check runs in the post_parse_analyze hook, so it
+ * runs when a statement or expression is parsed and not when it is
+ * executed. A plan built whilst the session was unrestricted is therefore
+ * reused without the check running again, and PL/pgSQL caches the plans
+ * for its expressions aggressively, so a session that becomes restricted
+ * part-way through its life could go on calling blocked functions through
+ * anything it had already executed. Nor can the check simply be moved to
+ * execution time: PL/pgSQL evaluates a simple expression through
+ * ExecEvalExprSwitchContext() without ever starting the executor, so the
+ * ExecutorStart hook does not see it.
+ *
+ * What makes the cached plan wrong is the change of state, so treat that
+ * change as an invalidation event and discard the cached plans, exactly as
+ * DISCARD PLANS does. Everything is then re-analysed under the new state.
+ *
+ * Only a transition into the restricted state needs this. A plan built
+ * whilst restricted has already passed the check, so it stays safe if the
+ * restriction is later lifted; the first observation in a session is
+ * treated as a transition so that a session which starts out restricted is
+ * not trusting anything cached before we first looked.
+ */
+static int last_restricted_state = -1;
+
+static void
+note_restriction_state(bool restricted)
+{
+    int state = restricted ? 1 : 0;
+
+    if (state == last_restricted_state)
+        return;
+
+    if (restricted)
+        ResetPlanCache();
+
+    last_restricted_state = state;
+}
+
+/*
+ * The restriction also changes when the configured roles change, or when a
+ * role is created, dropped, renamed or granted to another, and those can
+ * happen between two executions of an already-cached plan without this
+ * session running a statement in between. Discard cached plans there too,
+ * rather than waiting for the next statement to notice. Registering the
+ * plan-cache reset from a syscache callback is what core's own plancache
+ * does (see PlanCacheSysCallback).
+ */
 static void
 invalidate_role_cache(Datum arg, int cacheid, uint32 hashvalue)
 {
     role_cache_valid = false;
+    ResetPlanCache();
 }
 
 static void
 assign_safesession_roles(const char *newval, void *extra)
 {
     role_cache_valid = false;
+    ResetPlanCache();
 }
 
 /*
@@ -597,6 +650,15 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     if (IsTransactionState())
     {
         restricted = current_role_is_restricted();
+
+        /*
+         * Discard cached plans if this is the moment the session became
+         * restricted; see note_restriction_state(). Doing it here, before
+         * the statement runs, means anything it goes on to call, such as
+         * the body of a PL/pgSQL function, is re-analysed under the new
+         * state rather than replayed from a plan built under the old one.
+         */
+        note_restriction_state(restricted);
 
         /* Belt-and-suspenders: force the transaction read-only */
         if (restricted)
@@ -1004,6 +1066,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     {
         restricted = current_role_is_restricted();
 
+        /* See the matching call in safesession_ExecutorStart(). */
+        note_restriction_state(restricted);
+
         /* Belt-and-suspenders: force the transaction read-only */
         if (restricted)
             enforce_read_only();
@@ -1251,6 +1316,17 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
         standard_ProcessUtility(pstmt, queryString, readOnlyTree,
                                 context, params, queryEnv,
                                 dest, qc);
+
+    /*
+     * Some utility statements change who we are acting as, and therefore
+     * whether we are restricted, as their whole purpose: SET ROLE, SET
+     * SESSION AUTHORIZATION, and the RESET ALL and DISCARD ALL that undo
+     * them. The check at the top of this function ran before any of that
+     * took effect, so look again now that it has, rather than leaving the
+     * change to be noticed by whatever statement happens to come next.
+     */
+    if (IsTransactionState())
+        note_restriction_state(current_role_is_restricted());
 }
 
 /*

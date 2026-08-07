@@ -13,7 +13,7 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_guctamper \
           safesession_rolescheck safesession_procedural \
           safesession_rolecache safesession_status \
-          safesession_elevated \
+          safesession_elevated safesession_plancache \
           safesession_coverage
 REGRESS_OPTS = --inputdir=test
 
