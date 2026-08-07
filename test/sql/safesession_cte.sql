@@ -10,8 +10,9 @@
 -- Data-modifying CTE tests for pgEdge SafeSession
 -- WITH ... (INSERT|UPDATE|DELETE) ... RETURNING writes even though the
 -- top-level command is a SELECT, so the ModifyTable node is buried in the
--- plan tree. block_dml must catch it on its own, independently of
--- force_read_only, so this test runs with force_read_only = off.
+-- plan tree. block_dml must catch it on its own; its check runs in
+-- ExecutorStart ahead of core's read-only transaction check, so the error
+-- comes from SafeSession ("... in a read-only session").
 
 -- Setup: clean any stale state
 RESET SESSION AUTHORIZATION;
@@ -26,10 +27,8 @@ CREATE TABLE test_cte (id int, val text);
 INSERT INTO test_cte VALUES (1, 'seed');
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_cte TO safesession_cte;
 
--- Restrict the role with block_dml on but force_read_only off, so that
--- only block_dml (not core's XactReadOnly) can catch the write.
+-- Restrict the role (block_dml is on by default).
 ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_cte';
-ALTER SYSTEM SET pgedge_safesession.force_read_only = off;
 SELECT pg_reload_conf();
 SELECT pg_sleep(0.5);
 
@@ -60,7 +59,6 @@ SELECT * FROM test_cte ORDER BY id;
 
 -- Cleanup
 ALTER SYSTEM RESET pgedge_safesession.roles;
-ALTER SYSTEM RESET pgedge_safesession.force_read_only;
 SELECT pg_reload_conf();
 DROP TABLE test_cte;
 DROP ROLE safesession_cte;

@@ -9,7 +9,9 @@
  */
 #include "postgres.h"
 
+#include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/pg_aggregate.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
 #include "commands/copy.h"
@@ -20,6 +22,7 @@
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "parser/analyze.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -36,176 +39,255 @@ static bool safesession_block_dml = true;
 static bool safesession_block_ddl = true;
 static bool safesession_block_c_functions = true;
 static bool safesession_block_all_c_functions = false;
-static bool safesession_force_read_only = true;
-
-/* Track whether we've set default_transaction_read_only */
-static bool read_only_guc_set = false;
 
 /* Saved hook values */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
+static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 
 /* Function declarations */
 void _PG_init(void);
 
 /*
- * Check if a function OID refers to a blocked C-language
- * function.
+ * A curated list of side-effecting built-in (pg_catalog) functions.
  *
- * When block_all_c_functions is false (default), only
- * VOLATILE C functions are blocked. IMMUTABLE and STABLE
- * C functions (e.g., PostGIS geometry ops, pgvector distance
- * ops) are allowed since they promise no side effects.
+ * These are language-internal, so they are not caught by the
+ * volatile-user-function rule in function_is_blocked(), but a restricted
+ * session must not be able to call them: they write (sequences, large
+ * objects), read from the filesystem, change configuration, signal other
+ * backends, drive replication or take cross-session locks. The list is
+ * matched by name against built-in functions only. It is deliberately
+ * conservative rather than exhaustive; most of these are also
+ * superuser-gated by default, so this is largely defence in depth (the
+ * exceptions, such as the advisory-lock and sequence functions, are
+ * executable by ordinary roles).
+ */
+static const char *const dangerous_builtins[] = {
+    "lo_export",
+    "lo_import",
+    "nextval",
+    "pg_advisory_lock",
+    "pg_advisory_lock_shared",
+    "pg_advisory_unlock",
+    "pg_advisory_unlock_all",
+    "pg_advisory_unlock_shared",
+    "pg_advisory_xact_lock",
+    "pg_advisory_xact_lock_shared",
+    "pg_backup_start",
+    "pg_backup_stop",
+    "pg_cancel_backend",
+    "pg_create_logical_replication_slot",
+    "pg_create_physical_replication_slot",
+    "pg_create_restore_point",
+    "pg_drop_replication_slot",
+    "pg_logical_emit_message",
+    "pg_ls_dir",
+    "pg_promote",
+    "pg_read_binary_file",
+    "pg_read_file",
+    "pg_reload_conf",
+    "pg_replication_origin_advance",
+    "pg_replication_origin_session_setup",
+    "pg_stat_file",
+    "pg_stat_reset",
+    "pg_stat_reset_shared",
+    "pg_switch_wal",
+    "pg_terminate_backend",
+    "pg_try_advisory_lock",
+    "pg_try_advisory_lock_shared",
+    "pg_try_advisory_xact_lock",
+    "pg_try_advisory_xact_lock_shared",
+    "set_config",
+    "setval",
+};
+
+static bool
+name_is_dangerous_builtin(const char *proname)
+{
+    int i;
+
+    for (i = 0; i < lengthof(dangerous_builtins); i++)
+    {
+        if (strcmp(proname, dangerous_builtins[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool function_is_blocked(Oid funcid, void *context);
+
+/*
+ * Is this function's language "trusted", i.e. does its body run its work
+ * as SQL through the executor?
  *
- * When block_all_c_functions is true, all C-language
- * functions are blocked regardless of volatility.
+ * SQL and the trusted procedural languages (PL/pgSQL, trusted PL/Perl,
+ * ...) all have lanpltrusted set. Any write they perform, and any
+ * dangerous function they call in turn, is caught downstream by the
+ * executor hook and by this same post_parse_analyze check running again
+ * on their inner statements, so their calls need not be blocked up front.
+ * C, internal and untrusted PLs (plpython3u, plperlu, ...) can act
+ * natively, outside anything we can observe, and are treated as
+ * potentially side-effecting.
  */
 static bool
-is_c_language_function(Oid funcid)
+language_is_trusted(Oid prolang)
 {
-    HeapTuple    proctup;
-    Form_pg_proc procform;
-    bool         result = false;
+    HeapTuple        langtup;
+    Form_pg_language lang;
+    bool             trusted;
 
-    proctup = SearchSysCache1(PROCOID,
-                              ObjectIdGetDatum(funcid));
-    if (!HeapTupleIsValid(proctup))
+    langtup = SearchSysCache1(LANGOID, ObjectIdGetDatum(prolang));
+    if (!HeapTupleIsValid(langtup))
+        return false;   /* unknown language: treat as untrusted */
+
+    lang = (Form_pg_language) GETSTRUCT(langtup);
+    trusted = lang->lanpltrusted;
+    ReleaseSysCache(langtup);
+    return trusted;
+}
+
+/*
+ * An aggregate carries its own volatility in pg_proc, which need not match
+ * that of its underlying support functions: CREATE AGGREGATE happily
+ * leaves an aggregate marked IMMUTABLE even when its transition function
+ * is VOLATILE. A query references only the aggregate, so checking the
+ * aggregate's OID alone would let a volatile transition (or final, etc.)
+ * function run unnoticed. Expand the aggregate to its support functions
+ * and check each of them.
+ */
+static bool
+aggregate_support_is_blocked(Oid aggfnoid)
+{
+    HeapTuple          aggtup;
+    Form_pg_aggregate  agg;
+    bool               result = false;
+
+    aggtup = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(aggfnoid));
+    if (!HeapTupleIsValid(aggtup))
         return false;
 
-    procform = (Form_pg_proc) GETSTRUCT(proctup);
+    agg = (Form_pg_aggregate) GETSTRUCT(aggtup);
 
-    if (procform->prolang == ClanguageId)
-    {
-        if (safesession_block_all_c_functions)
-            result = true;
-        else
-            result = (procform->provolatile ==
-                      PROVOLATILE_VOLATILE);
-    }
+    if ((OidIsValid(agg->aggtransfn) &&
+         function_is_blocked(agg->aggtransfn, NULL)) ||
+        (OidIsValid(agg->aggfinalfn) &&
+         function_is_blocked(agg->aggfinalfn, NULL)) ||
+        (OidIsValid(agg->aggcombinefn) &&
+         function_is_blocked(agg->aggcombinefn, NULL)) ||
+        (OidIsValid(agg->aggserialfn) &&
+         function_is_blocked(agg->aggserialfn, NULL)) ||
+        (OidIsValid(agg->aggdeserialfn) &&
+         function_is_blocked(agg->aggdeserialfn, NULL)) ||
+        (OidIsValid(agg->aggmtransfn) &&
+         function_is_blocked(agg->aggmtransfn, NULL)) ||
+        (OidIsValid(agg->aggminvtransfn) &&
+         function_is_blocked(agg->aggminvtransfn, NULL)) ||
+        (OidIsValid(agg->aggmfinalfn) &&
+         function_is_blocked(agg->aggmfinalfn, NULL)))
+        result = true;
 
-    ReleaseSysCache(proctup);
+    ReleaseSysCache(aggtup);
     return result;
 }
 
 /*
- * Recursively walk an expression tree looking for C-language
- * function calls.
+ * Policy: does this function OID refer to a function that a restricted
+ * session must not be allowed to execute?
+ *
+ * A function is blocked when it is either:
+ *   - a user or extension function (OID >= FirstNormalObjectId) that is
+ *     marked VOLATILE and written in an untrusted language (C, internal
+ *     or an untrusted PL), i.e. one that may have side effects we cannot
+ *     otherwise observe. STABLE and IMMUTABLE functions, and functions in
+ *     trusted languages (SQL, PL/pgSQL, ...) whose writes are caught
+ *     downstream, are allowed; or
+ *   - one of a curated set of side-effecting built-ins (see
+ *     dangerous_builtins), which are language-internal and so would not
+ *     be flagged by the rule above.
+ *
+ * Harmless volatile built-ins such as random() and clock_timestamp() are
+ * deliberately allowed. Separately, when block_all_c_functions is set,
+ * every C-language function is blocked regardless of volatility.
+ *
+ * The signature matches check_function_callback so this can be handed to
+ * check_functions_in_node().
  */
 static bool
-contains_c_function_walker(Node *node, void *context)
+function_is_blocked(Oid funcid, void *context)
+{
+    HeapTuple    proctup;
+    Form_pg_proc procform;
+    bool         result;
+    char         prokind;
+    char         provolatile;
+    Oid          prolang;
+    bool         is_builtin;
+    NameData     proname;
+
+    proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+    if (!HeapTupleIsValid(proctup))
+        return false;
+
+    procform = (Form_pg_proc) GETSTRUCT(proctup);
+    prokind = procform->prokind;
+    provolatile = procform->provolatile;
+    prolang = procform->prolang;
+    proname = procform->proname;
+    is_builtin = (funcid < FirstNormalObjectId);
+    ReleaseSysCache(proctup);
+
+    if (safesession_block_all_c_functions && prolang == ClanguageId)
+        result = true;
+    else if (is_builtin)
+        result = name_is_dangerous_builtin(NameStr(proname));
+    else
+        result = (provolatile == PROVOLATILE_VOLATILE) &&
+                 !language_is_trusted(prolang);
+
+    /*
+     * An aggregate's declared volatility need not reflect its support
+     * functions, so also check those (see aggregate_support_is_blocked).
+     */
+    if (!result && prokind == PROKIND_AGGREGATE)
+        result = aggregate_support_is_blocked(funcid);
+
+    return result;
+}
+
+/*
+ * Walk a parse-analysed Query, and everything reachable from it
+ * (subqueries, CTEs, set operations, join and index quals, aggregates,
+ * window functions, ScalarArrayOpExpr, and so on), looking for a
+ * function that function_is_blocked() rejects.
+ *
+ * check_functions_in_node() enumerates every function-bearing node type,
+ * so this covers the whole statement rather than a hand-picked set of
+ * plan fields, and does not need revisiting when a new node type or plan
+ * shape is added.
+ */
+static bool
+query_has_blocked_function_walker(Node *node, void *context)
 {
     if (node == NULL)
         return false;
 
-    if (IsA(node, FuncExpr))
-    {
-        FuncExpr *fexpr = (FuncExpr *) node;
-        if (is_c_language_function(fexpr->funcid))
-            return true;
-    }
-    else if (IsA(node, OpExpr))
-    {
-        OpExpr *opexpr = (OpExpr *) node;
-        if (is_c_language_function(opexpr->opfuncid))
-            return true;
-    }
+    if (check_functions_in_node(node, function_is_blocked, context))
+        return true;
+
+    if (IsA(node, Query))
+        return query_tree_walker((Query *) node,
+                                 query_has_blocked_function_walker,
+                                 context, 0);
 
     return expression_tree_walker(node,
-                                  contains_c_function_walker,
+                                  query_has_blocked_function_walker,
                                   context);
 }
 
-/*
- * Recursively walk a Plan tree checking all nodes for
- * C-language function calls. Unlike just checking the
- * top-level targetlist/qual, this visits every plan node
- * including join conditions, hash clauses, index quals,
- * sort expressions, etc.
- */
 static bool
-plan_walker_check_c_functions(Plan *plan)
+query_has_blocked_function(Query *query)
 {
-    ListCell *lc;
-
-    if (plan == NULL)
-        return false;
-
-    /* Check this node's targetlist and qual */
-    if (expression_tree_walker(
-            (Node *) plan->targetlist,
-            contains_c_function_walker, NULL))
-        return true;
-
-    if (expression_tree_walker(
-            (Node *) plan->qual,
-            contains_c_function_walker, NULL))
-        return true;
-
-    /* Check initPlan expressions */
-    if (expression_tree_walker(
-            (Node *) plan->initPlan,
-            contains_c_function_walker, NULL))
-        return true;
-
-    /* Recurse into child plan nodes */
-    if (plan_walker_check_c_functions(
-            innerPlan(plan)))
-        return true;
-
-    if (plan_walker_check_c_functions(
-            outerPlan(plan)))
-        return true;
-
-    /* Check any additional plans in Append, MergeAppend, etc. */
-    if (IsA(plan, Append))
-    {
-        foreach(lc, ((Append *) plan)->appendplans)
-        {
-            if (plan_walker_check_c_functions(
-                    (Plan *) lfirst(lc)))
-                return true;
-        }
-    }
-    else if (IsA(plan, MergeAppend))
-    {
-        foreach(lc, ((MergeAppend *) plan)->mergeplans)
-        {
-            if (plan_walker_check_c_functions(
-                    (Plan *) lfirst(lc)))
-                return true;
-        }
-    }
-    else if (IsA(plan, SubqueryScan))
-    {
-        if (plan_walker_check_c_functions(
-                ((SubqueryScan *) plan)->subplan))
-            return true;
-    }
-
-    return false;
-}
-
-/*
- * Check if a planned statement contains calls to C-language
- * functions anywhere in the plan tree or subplans.
- */
-static bool
-plan_contains_c_functions(PlannedStmt *pstmt)
-{
-    ListCell *lc;
-
-    if (plan_walker_check_c_functions(pstmt->planTree))
-        return true;
-
-    /* Check all subplans (CTEs, SubLinks, etc.) */
-    foreach(lc, pstmt->subplans)
-    {
-        if (plan_walker_check_c_functions(
-                (Plan *) lfirst(lc)))
-            return true;
-    }
-
-    return false;
+    return query_has_blocked_function_walker((Node *) query, NULL);
 }
 
 /*
@@ -288,47 +370,30 @@ current_role_is_restricted(void)
 }
 
 /*
- * Belt-and-suspenders: enforce read-only at the transaction level.
+ * Belt-and-suspenders: force the current transaction read-only for a
+ * restricted session, so PostgreSQL's own internal checks reject any
+ * write that slips past our hooks.
  *
- * Sets both XactReadOnly (current transaction) and
- * default_transaction_read_only (future transactions) when the
- * session is restricted. Clears both when the session is no
- * longer restricted (e.g., after RESET SESSION AUTHORIZATION).
+ * We set XactReadOnly directly, per statement, and never touch the
+ * default_transaction_read_only GUC. XactReadOnly is transaction-scoped
+ * and reset from the GUC at the start of each transaction, so setting it
+ * on every executed statement and utility command keeps the current
+ * transaction read-only without leaving any session-level state behind.
  *
- * This ensures that even if something bypasses our hooks,
- * PostgreSQL's own internal read-only checks will catch it.
+ * We deliberately never clear it: a session that is not restricted is
+ * left alone, so a user's own BEGIN READ ONLY / SET TRANSACTION READ ONLY
+ * is not overridden.
  */
 static void
-manage_read_only_state(bool is_restricted)
+enforce_read_only(void)
 {
-    if (is_restricted && !read_only_guc_set)
-    {
-        XactReadOnly = true;
-        SetConfigOption("default_transaction_read_only", "on",
-                        PGC_USERSET, PGC_S_SESSION);
-        read_only_guc_set = true;
-    }
-    else if (is_restricted && read_only_guc_set)
-    {
-        /*
-         * Already set for the session, but ensure the
-         * current transaction is also read-only (each new
-         * transaction resets XactReadOnly from the GUC).
-         */
-        XactReadOnly = true;
-    }
-    else if (!is_restricted && read_only_guc_set)
-    {
-        XactReadOnly = false;
-        SetConfigOption("default_transaction_read_only", "off",
-                        PGC_USERSET, PGC_S_SESSION);
-        read_only_guc_set = false;
-    }
+    XactReadOnly = true;
 }
 
 /*
- * ExecutorStart hook: block DML and C-language functions
- * for restricted roles.
+ * ExecutorStart hook: block DML (including data-modifying CTEs) for
+ * restricted roles. Blocked function calls are handled earlier, in the
+ * post_parse_analyze hook.
  */
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
@@ -346,9 +411,9 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     {
         restricted = current_role_is_restricted();
 
-        /* Belt-and-suspenders: manage read-only state */
-        if (safesession_force_read_only)
-            manage_read_only_state(restricted);
+        /* Belt-and-suspenders: force the transaction read-only */
+        if (restricted)
+            enforce_read_only();
     }
 
     if (restricted)
@@ -402,16 +467,6 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
                                 " WITH clause in a read-only"
                                 " session")));
         }
-
-        /* Block C-language function calls */
-        if (safesession_block_c_functions &&
-            plan_contains_c_functions(pstmt))
-            ereport(ERROR,
-                    (errcode(
-                        ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                     errmsg("cannot execute C language"
-                            " functions in a"
-                            " read-only session")));
     }
 
     /* Chain to previous hook or standard function */
@@ -419,6 +474,37 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
         prev_ExecutorStart(queryDesc, eflags);
     else
         standard_ExecutorStart(queryDesc, eflags);
+}
+
+/*
+ * post_parse_analyze hook: block statements that call a function a
+ * restricted session must not run. Working from the analysed Query
+ * rather than the plan lets us examine every function the statement
+ * references, wherever it ends up in the plan tree.
+ */
+static void
+safesession_post_parse_analyze(ParseState *pstate, Query *query
+#if PG_VERSION_NUM >= 140000
+                               , JumbleState *jstate
+#endif
+                               )
+{
+    if (prev_post_parse_analyze)
+        prev_post_parse_analyze(pstate, query
+#if PG_VERSION_NUM >= 140000
+                                , jstate
+#endif
+                                );
+
+    if (safesession_block_c_functions &&
+        IsTransactionState() &&
+        current_role_is_restricted() &&
+        query_has_blocked_function(query))
+        ereport(ERROR,
+                (errcode(
+                    ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                 errmsg("cannot execute functions that may have"
+                        " side effects in a read-only session")));
 }
 
 /*
@@ -477,9 +563,14 @@ is_protected_guc_set(VariableSetStmt *stmt)
         }
     }
 
-    /* RESET ALL would reset our protected GUCs */
-    if (stmt->kind == VAR_RESET_ALL)
-        return true;
+    /*
+     * RESET ALL is intentionally not treated as protected. Enforcement no
+     * longer relies on any session-level GUC we could set (XactReadOnly is
+     * re-asserted per statement), and our own GUCs are PGC_SUSET, so a
+     * restricted role's RESET ALL cannot relax the restriction. Allowing it
+     * keeps connection poolers, which issue RESET ALL on connection reset,
+     * working.
+     */
 
     return false;
 }
@@ -571,9 +662,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     {
         restricted = current_role_is_restricted();
 
-        /* Belt-and-suspenders: manage read-only state */
-        if (safesession_force_read_only)
-            manage_read_only_state(restricted);
+        /* Belt-and-suspenders: force the transaction read-only */
+        if (restricted)
+            enforce_read_only();
     }
 
     /*
@@ -620,6 +711,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              * - COPY TO (read-only, not PROGRAM)
              * - DO blocks (inner writes caught by
              *   ExecutorStart)
+             * - DISCARD (session-state reset; enforcement is
+             *   re-asserted per statement, so it is harmless and
+             *   is needed by connection poolers)
              */
             case T_TransactionStmt:
             case T_PrepareStmt:
@@ -633,6 +727,7 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_UnlistenStmt:
             case T_CheckPointStmt:
             case T_DoStmt:
+            case T_DiscardStmt:
                 /* These are allowed */
                 break;
 
@@ -801,9 +896,10 @@ _PG_init(void)
 
     DefineCustomBoolVariable(
         "pgedge_safesession.block_c_functions",
-        "Block C-language function execution for "
-        "restricted roles. By default only volatile "
-        "C functions are blocked.",
+        "Block execution of functions that may have side "
+        "effects for restricted roles: volatile user or "
+        "extension functions, plus a set of side-effecting "
+        "built-ins.",
         NULL,
         &safesession_block_c_functions,
         true,
@@ -815,27 +911,13 @@ _PG_init(void)
 
     DefineCustomBoolVariable(
         "pgedge_safesession.block_all_c_functions",
-        "Block all C-language functions regardless of "
-        "volatility. When off, only volatile C functions "
-        "are blocked. Only applies when block_c_functions "
-        "is on.",
+        "Additionally block every C-language function "
+        "regardless of volatility. This can break read-only "
+        "extension functions (e.g. PostGIS, pgvector). Only "
+        "applies when block_c_functions is on.",
         NULL,
         &safesession_block_all_c_functions,
         false,
-        PGC_SUSET,
-        0,
-        NULL,
-        NULL,
-        NULL);
-
-    DefineCustomBoolVariable(
-        "pgedge_safesession.force_read_only",
-        "Set default_transaction_read_only and "
-        "XactReadOnly for restricted sessions as "
-        "belt-and-suspenders protection.",
-        NULL,
-        &safesession_force_read_only,
-        true,
         PGC_SUSET,
         0,
         NULL,
@@ -849,6 +931,10 @@ _PG_init(void)
     /* Install ProcessUtility hook */
     prev_ProcessUtility = ProcessUtility_hook;
     ProcessUtility_hook = safesession_ProcessUtility;
+
+    /* Install post_parse_analyze hook (blocked function detection) */
+    prev_post_parse_analyze = post_parse_analyze_hook;
+    post_parse_analyze_hook = safesession_post_parse_analyze;
 
 #if PG_VERSION_NUM >= 150000
     MarkGUCPrefixReserved("pgedge_safesession");

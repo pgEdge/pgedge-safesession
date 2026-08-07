@@ -19,8 +19,6 @@ and this project adheres to
       blocking (default: on)
     - `block_all_c_functions`: block all C functions
       regardless of volatility (default: off)
-    - `force_read_only`: toggle belt-and-suspenders
-      XactReadOnly enforcement (default: off)
 
 - COPY TO PROGRAM blocking for restricted sessions
 - SET TRANSACTION READ WRITE blocking for restricted
