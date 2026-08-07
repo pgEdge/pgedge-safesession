@@ -124,47 +124,63 @@ functions. Only applies when `block_c_functions` is on.
 For restricted sessions (with all protections enabled),
 the following operations are blocked:
 
-- **DML**: INSERT, UPDATE, DELETE, MERGE (PostgreSQL 15+)
+- **DML**: INSERT, UPDATE, DELETE, MERGE (PostgreSQL 15+),
+  including data-modifying CTEs
+  (`WITH c AS (INSERT ... RETURNING ...) ...`)
 - **DDL**: CREATE, ALTER, DROP, TRUNCATE, and all other
   schema modification commands
 - **COPY FROM**: data import (COPY TO is allowed)
 - **COPY TO PROGRAM**: program execution via COPY
 - **CREATE TABLE AS / SELECT INTO**: table creation from
-  queries
+  queries, including their `EXPLAIN ANALYZE` forms
+- **EXPLAIN ANALYZE of a writing statement**: it executes
+  the statement, so it is treated as a write
 - **GRANT / REVOKE**: privilege modifications
 - **VACUUM / ANALYZE**: maintenance commands
-- **Volatile C-language functions**: functions implemented
-  in C that are marked VOLATILE (e.g., `dblink_exec`,
-  `lo_import`, `set_config`). IMMUTABLE/STABLE C functions
-  are allowed by default.
+- **CHECKPOINT**: forces heavy I/O and emits WAL
+- **Two-phase commit**: PREPARE TRANSACTION, COMMIT
+  PREPARED, ROLLBACK PREPARED
+- **Side-effecting functions**: volatile functions in
+  untrusted languages (C, internal, or an untrusted PL
+  such as `plpython3u`), plus a curated set of
+  side-effecting built-ins (`lo_import`, `pg_read_file`,
+  `set_config`, `pg_advisory_lock`, `nextval`, and others).
+  A `DO` block or `CALL` in an untrusted language is
+  blocked for the same reason.
 - **Exclusive locks**: LOCK TABLE with modes above
   ROW SHARE
-- **GUC tampering**: SET/RESET of
-  `default_transaction_read_only`, SET TRANSACTION
-  READ WRITE, and RESET ALL
+- **GUC tampering**: SET/RESET of `transaction_read_only`
+  or `default_transaction_read_only`, SET TRANSACTION
+  READ WRITE, and SET SESSION CHARACTERISTICS AS
+  TRANSACTION READ WRITE
 
 ## What is Allowed
 
 - **SELECT**: all read queries, including those using
   WHERE clauses, aggregates, and built-in functions
-- **EXPLAIN**: query plans (does not execute)
+- **EXPLAIN**: query plans. Plain EXPLAIN only plans and
+  is always allowed; EXPLAIN ANALYZE is allowed only when
+  the statement it runs does not write.
 - **Transaction control**: BEGIN, COMMIT, ROLLBACK,
   SAVEPOINT
 - **SET / RESET**: non-protected GUC changes
   (e.g., work_mem)
-- **SET TRANSACTION ISOLATION LEVEL**: isolation level
-  changes
+- **SET TRANSACTION**: ISOLATION LEVEL and READ ONLY
+  (tightening the transaction is allowed)
 - **SHOW**: display settings
 - **LISTEN / NOTIFY**: notification channels
 - **Cursors**: DECLARE, FETCH, CLOSE
-- **DO blocks**: anonymous code blocks (inner writes are
-  caught by the executor hook)
+- **Connection-pooler resets**: DISCARD ALL, DISCARD
+  PLANS, and RESET ALL (they cannot relax the restriction,
+  which is re-asserted per statement)
+- **DO blocks and CALL**: in a trusted language (PL/pgSQL,
+  SQL, ...); any write inside is caught by the executor
+  hook
 - **PL/pgSQL and SQL functions**: read-only functions
   execute normally; any write attempt inside a function
   is caught by the executor hook
-- **IMMUTABLE/STABLE C functions**: extension functions
-  that promise no side effects (e.g., PostGIS spatial
-  calculations, pgvector distance operators)
+- **IMMUTABLE/STABLE functions**, and harmless volatile
+  built-ins such as `random()` and `clock_timestamp()`
 
 ## Security Model
 
@@ -209,6 +225,29 @@ PostgreSQL's own internal read-only checks will catch it.
 The setting is applied without writing any session-level
 GUC, so it leaves no state behind and does not interfere
 with connection poolers.
+
+## Known Limitations
+
+- The list of side-effecting built-in functions is curated
+  and deliberately conservative rather than exhaustive.
+  Most such functions are superuser-only in any case; the
+  notable exceptions, the advisory-lock and sequence
+  functions, are on the list. A volatile function in a
+  trusted language is allowed to run, and any write it
+  performs is caught at execution instead.
+- Enforcement anchors on the session user. A superuser can
+  still use `SET SESSION AUTHORIZATION` to become a
+  restricted role (that is how the restriction is entered);
+  this is by design and is not a bypass.
+- The roles list must be set from the server configuration
+  (`shared_preload_libraries` is required, and the roles
+  are normally set in `postgresql.conf` or with
+  `ALTER SYSTEM`). Setting it only for a single session
+  with `SET` would be undone by that session's `DISCARD
+  ALL` or `RESET ALL`.
+- SafeSession and Spock both install executor and utility
+  hooks. They chain correctly, but if both are deployed the
+  interaction has not been exhaustively tested.
 
 ## Example
 

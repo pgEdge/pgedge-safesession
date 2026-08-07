@@ -1127,6 +1127,23 @@ check_safesession_roles(char **newval, void **extra, GucSource source)
 void
 _PG_init(void)
 {
+    /*
+     * The hooks installed below only take effect for the backend that
+     * loads this library, so it must be loaded via
+     * shared_preload_libraries to protect every session. Loading it into
+     * a single session (LOAD, or an implicit load from calling one of its
+     * functions) would silently leave other sessions unprotected, so
+     * refuse that.
+     */
+    if (!process_shared_preload_libraries_in_progress)
+        ereport(ERROR,
+                (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                 errmsg("pgedge_safesession must be loaded via "
+                        "shared_preload_libraries"),
+                 errdetail("Add \"pgedge_safesession\" to "
+                           "shared_preload_libraries and restart the "
+                           "server.")));
+
     /* Define GUCs */
     DefineCustomStringVariable(
         "pgedge_safesession.roles",
