@@ -23,6 +23,8 @@
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
 #include "parser/analyze.h"
+#include "parser/parse_expr.h"
+#include "parser/parse_node.h"
 #include "tcop/cmdtag.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
@@ -837,6 +839,92 @@ explained_stmt_writes(Node *query)
             IsA(q->utilityStmt, CreateTableAsStmt));
 }
 
+/*
+ * If this statement is an EXECUTE, return it, unwrapping the utility Query
+ * that parse analysis plasters over the statement carried by EXPLAIN and
+ * CREATE TABLE AS. Returns NULL for anything else.
+ */
+static ExecuteStmt *
+extract_execute_stmt(Node *node)
+{
+    if (node == NULL)
+        return NULL;
+
+    if (IsA(node, Query))
+    {
+        Query *q = (Query *) node;
+
+        if (q->commandType != CMD_UTILITY)
+            return NULL;
+        node = q->utilityStmt;
+        if (node == NULL)
+            return NULL;
+    }
+
+    if (IsA(node, ExecuteStmt))
+        return (ExecuteStmt *) node;
+
+    return NULL;
+}
+
+/*
+ * Does the parameter list of an EXECUTE call a function a restricted
+ * session must not run?
+ *
+ * The parameters of a prepared statement are not part of the prepared
+ * Query, so the post_parse_analyze walker never sees them, and they are
+ * not evaluated through the executor either: EvaluateParams() transforms
+ * them at execution time and evaluates them with ExecPrepareExprList() and
+ * ExecEvalExprSwitchContext(), neither of which reaches ExecutorStart().
+ * Without this check a restricted role could run any blocked function
+ * simply by passing it as a parameter, and would not even need a grant to
+ * do so, since it can prepare the statement itself.
+ *
+ * At this point the parameters are still raw parse nodes (the walker dies
+ * on a T_FuncCall), so each one is transformed the way EvaluateParams()
+ * does, with the same ParseState setup and expression kind core uses, and
+ * the transformed expression is then handed to the ordinary walker. The
+ * parse tree is copied first, both because the parser scribbles on its
+ * input and because core transforms the same list again afterwards.
+ *
+ * Unlike core we do not coerce the result to the prepared statement's
+ * declared parameter types: coercion only adds cast expressions, and its
+ * purpose is type checking, which core still does when it evaluates the
+ * parameters for real. Skipping it also means we need not look the
+ * prepared statement up at all, so a wrong number of parameters, or a
+ * statement name that does not exist, is left for core to report, except
+ * where the parameter list is rejected here first.
+ */
+static bool
+execute_params_have_blocked_function(ExecuteStmt *stmt,
+                                     const char *queryString)
+{
+    ParseState *pstate;
+    ListCell   *lc;
+    bool        found = false;
+
+    if (stmt->params == NIL)
+        return false;
+
+    pstate = make_parsestate(NULL);
+    pstate->p_sourcetext = queryString;
+
+    foreach(lc, stmt->params)
+    {
+        Node *expr = (Node *) copyObject((Node *) lfirst(lc));
+
+        expr = transformExpr(pstate, expr, EXPR_KIND_EXECUTE_PARAMETER);
+
+        if (query_has_blocked_function_walker(expr, NULL))
+        {
+            found = true;
+            break;
+        }
+    }
+
+    free_parsestate(pstate);
+    return found;
+}
 
 /*
  * ProcessUtility hook: block DDL and other write operations.
@@ -907,6 +995,39 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
         safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
                            "cannot execute EXPLAIN ANALYZE of a writing"
                            " statement in a read-only session");
+
+    /*
+     * The parameters of an EXECUTE are evaluated here in the utility
+     * layer, so a blocked function passed as one escapes both of the
+     * checks that would otherwise catch it; see
+     * execute_params_have_blocked_function() for the detail. This is
+     * governed by block_c_functions rather than block_ddl, because what is
+     * at stake is the function-blocking policy and not the statement
+     * itself: EXECUTE stays allowed either way.
+     *
+     * EXPLAIN EXECUTE evaluates the parameters too, with or without
+     * ANALYZE, and so does CREATE TABLE AS ... EXECUTE, so both wrappers
+     * are checked as well as a bare EXECUTE.
+     */
+    if (restricted && safesession_block_c_functions && parsetree != NULL)
+    {
+        ExecuteStmt *estmt = NULL;
+
+        if (IsA(parsetree, ExecuteStmt))
+            estmt = (ExecuteStmt *) parsetree;
+        else if (IsA(parsetree, ExplainStmt))
+            estmt = extract_execute_stmt(
+                ((ExplainStmt *) parsetree)->query);
+        else if (IsA(parsetree, CreateTableAsStmt))
+            estmt = extract_execute_stmt(
+                ((CreateTableAsStmt *) parsetree)->query);
+
+        if (estmt != NULL &&
+            execute_params_have_blocked_function(estmt, queryString))
+            safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                               "cannot execute functions that may have"
+                               " side effects in a read-only session");
+    }
 
     if (restricted && parsetree != NULL && safesession_block_ddl)
     {

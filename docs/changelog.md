@@ -51,6 +51,14 @@ and this project adheres to
   asserts read-only on each connection it opens, such as a
   connection pool running with writes disabled, was locked
   out entirely. Only relaxing either setting is blocked now.
+- A restricted session could run any blocked function by
+  passing it as a parameter to `EXECUTE`, because the
+  parameters of a prepared statement are neither part of the
+  prepared query nor evaluated through the executor, so
+  neither of the checks that would catch them ever saw them.
+  The same evaluation happens for `EXPLAIN EXECUTE`, with or
+  without `ANALYZE`, and for `CREATE TABLE AS ... EXECUTE`,
+  and all three are now checked.
 
 ## [1.0-alpha1] - Unreleased
 

@@ -146,7 +146,11 @@ the following operations are blocked:
   side-effecting built-ins (`lo_import`, `pg_read_file`,
   `set_config`, `pg_advisory_lock`, `nextval`, and others).
   A `DO` block or `CALL` in an untrusted language is
-  blocked for the same reason.
+  blocked for the same reason. Arguments count as part of
+  the statement, so a blocked function is rejected whether
+  it is called directly, passed as a `CALL` argument, or
+  passed as an `EXECUTE` parameter (including through
+  `EXPLAIN EXECUTE` and `CREATE TABLE AS ... EXECUTE`).
 - **Exclusive locks**: LOCK TABLE with modes above
   ROW SHARE
 - **GUC tampering**: any attempt to relax
