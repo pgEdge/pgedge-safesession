@@ -36,9 +36,7 @@ GRANT ALL ON test_membership TO safesession_member;
 GRANT ALL ON test_membership TO safesession_supertest;
 
 -- Configure restriction on the parent role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_readonly';
 
 -- Test: member role should be restricted
 SET SESSION AUTHORIZATION safesession_member;
@@ -63,8 +61,7 @@ SELECT * FROM test_membership ORDER BY id;
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_membership;
 REVOKE safesession_readonly FROM safesession_member;
 REVOKE safesession_readonly FROM safesession_supertest;

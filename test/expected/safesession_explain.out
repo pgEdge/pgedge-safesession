@@ -29,19 +29,7 @@ GRANT SELECT ON test_explain TO safesession_explain;
 -- (public loses its default CREATE grant on PostgreSQL 15+).
 GRANT CREATE ON SCHEMA public TO safesession_explain;
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_explain';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_explain';
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_explain;
 -- Plain EXPLAIN only plans; allowed (COSTS OFF for deterministic output)
@@ -129,13 +117,7 @@ SELECT count(*) AS test_explain_rows FROM test_explain;
 (1 row)
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 REVOKE ALL ON SCHEMA public FROM safesession_explain;
 DROP TABLE test_explain;
 DROP ROLE safesession_explain;

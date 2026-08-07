@@ -49,9 +49,7 @@ GRANT SELECT ON test_walk, test_walk2 TO safesession_walk;
 GRANT USAGE ON SEQUENCE walk_seq TO safesession_walk;
 GRANT EXECUTE ON FUNCTION walk_vol(int), walk_imm(int) TO safesession_walk;
 
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_walk';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_walk';
 
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_walk;
@@ -95,8 +93,7 @@ SET default_transaction_read_only = off;
 SELECT last_value, is_called FROM walk_seq;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP FUNCTION walk_vol(int);
 DROP FUNCTION walk_imm(int);
 DROP SEQUENCE walk_seq;

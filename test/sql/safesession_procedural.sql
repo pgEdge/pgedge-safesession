@@ -42,9 +42,7 @@ END $$;
 GRANT EXECUTE ON PROCEDURE proc_read(), proc_write(), proc_arg(text)
     TO safesession_proc;
 
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_proc';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_proc';
 
 SET SESSION AUTHORIZATION safesession_proc;
 
@@ -79,8 +77,7 @@ SET default_transaction_read_only = off;
 SELECT count(*) AS rows FROM test_proc;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP PROCEDURE proc_read();
 DROP PROCEDURE proc_write();
 DROP PROCEDURE proc_arg(text);

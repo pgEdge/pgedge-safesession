@@ -28,9 +28,7 @@ INSERT INTO test_cte VALUES (1, 'seed');
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_cte TO safesession_cte;
 
 -- Restrict the role (block_dml is on by default).
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_cte';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_cte';
 
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_cte;
@@ -58,8 +56,7 @@ SET default_transaction_read_only = off;
 SELECT * FROM test_cte ORDER BY id;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_cte;
 DROP ROLE safesession_cte;
 DROP EXTENSION pgedge_safesession;

@@ -38,19 +38,7 @@ BEGIN
 END $$;
 GRANT EXECUTE ON PROCEDURE proc_read(), proc_write(), proc_arg(text)
     TO safesession_proc;
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_proc';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_proc';
 SET SESSION AUTHORIZATION safesession_proc;
 -- CHECKPOINT is not read-only and must be blocked
 CHECKPOINT;
@@ -80,6 +68,7 @@ SHOW work_mem;
 
 CALL proc_arg(set_config('work_mem', '55MB', false));
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 SHOW work_mem;
  work_mem 
 ----------
@@ -98,13 +87,7 @@ SELECT count(*) AS rows FROM test_proc;
 (1 row)
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP PROCEDURE proc_read();
 DROP PROCEDURE proc_write();
 DROP PROCEDURE proc_arg(text);

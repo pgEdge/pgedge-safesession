@@ -28,9 +28,7 @@ INSERT INTO test_abort VALUES (1);
 GRANT SELECT, INSERT ON test_abort TO safesession_abort;
 
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_abort';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_abort';
 
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_abort;
@@ -56,8 +54,7 @@ INSERT INTO test_abort VALUES (3);
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_abort;
 DROP ROLE safesession_abort;
 DROP EXTENSION pgedge_safesession;

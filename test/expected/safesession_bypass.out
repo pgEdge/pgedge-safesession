@@ -27,19 +27,7 @@ GRANT ALL ON test_bypass TO safesession_unrestricted;
 -- Allow restricted role to SET ROLE to unrestricted
 GRANT safesession_unrestricted TO safesession_readonly;
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_readonly';
 -- Connect as restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
 -- SELECT should work
@@ -68,13 +56,7 @@ HINT:  This session is restricted to read-only access by the pgedge_safesession 
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP TABLE test_bypass;
 REVOKE safesession_unrestricted FROM safesession_readonly;
 DROP ROLE safesession_unrestricted;

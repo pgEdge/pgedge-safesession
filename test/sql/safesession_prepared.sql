@@ -28,9 +28,7 @@ CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 
 CREATE ROLE safesession_2pc LOGIN;
 
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_2pc';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_2pc';
 
 SET SESSION AUTHORIZATION safesession_2pc;
 
@@ -58,7 +56,6 @@ DEALLOCATE myplan;
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP ROLE safesession_2pc;
 DROP EXTENSION pgedge_safesession;

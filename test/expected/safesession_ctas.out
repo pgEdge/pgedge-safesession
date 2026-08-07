@@ -26,19 +26,7 @@ INSERT INTO test_ctas_src VALUES (1, 'hello');
 GRANT SELECT ON test_ctas_src TO safesession_readonly;
 GRANT CREATE ON SCHEMA public TO safesession_readonly;
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_readonly';
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
 -- CREATE TABLE AS should be blocked
@@ -59,13 +47,7 @@ SELECT * FROM test_ctas_src ORDER BY id;
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 REVOKE CREATE ON SCHEMA public FROM safesession_readonly;
 DROP TABLE test_ctas_src;
 DROP ROLE safesession_readonly;
