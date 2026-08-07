@@ -223,8 +223,23 @@ function owned by a privileged user to perform writes.
 
 If role `app_reader` is listed in
 `pgedge_safesession.roles`, then any role that is a member
-of `app_reader` is also restricted. This uses PostgreSQL's
-`is_member_of_role()` function for membership checking.
+of `app_reader` is also restricted. Membership is tested
+with PostgreSQL's `is_member_of_role_nosuper()`, so it
+follows actual grants only.
+
+The distinction matters because PostgreSQL otherwise reports
+a superuser as a member of every role in the database, with
+no grant behind it, which is the right answer for a
+privilege test and the wrong one here. Any mechanism that
+briefly makes the current user a superuser whilst the
+session user is not, such as a SECURITY DEFINER function
+owned by a superuser or an extension like supautils
+elevating a privileged role for a single command, would
+otherwise appear to be acting as a member of every
+restricted role and be blocked. Enforcement still anchors on
+the session user, so such elevation is not a way out of the
+restriction either: a restricted session stays restricted
+inside a superuser-owned SECURITY DEFINER function.
 
 ### Belt-and-Suspenders
 

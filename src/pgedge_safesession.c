@@ -380,7 +380,7 @@ query_has_blocked_function(Query *query)
  * of the cost. The resolved OID list changes only when the GUC changes or
  * when pg_authid changes (a role created, dropped or renamed), so cache
  * it and rebuild lazily after either of those. Membership is not cached
- * here: is_member_of_role() is checked per call against the live
+ * here: is_member_of_role_nosuper() is checked per call against the live
  * session/current user and is itself cached and invalidated by core.
  *
  * The list lives in CacheMemoryContext so it survives across statements.
@@ -461,6 +461,14 @@ rebuild_role_cache(void)
  * session is never restricted. We deliberately check the session
  * user (not the current user) so that SECURITY DEFINER functions
  * owned by superusers cannot bypass the restriction.
+ *
+ * Membership is tested with is_member_of_role_nosuper() rather than
+ * is_member_of_role(), because the latter reports that a superuser is a
+ * member of every role in the database, having no grant behind it at all.
+ * That is the right answer for a privilege test and the wrong one here:
+ * we are asking whether the acting role was actually placed in a
+ * restricted group, not whether it happens to hold that group's
+ * privileges by other means.
  */
 static bool
 current_role_is_restricted(void)
@@ -495,13 +503,24 @@ current_role_is_restricted(void)
 
         /* Check session user */
         if (session_userid == roleid ||
-            is_member_of_role(session_userid, roleid))
+            is_member_of_role_nosuper(session_userid, roleid))
             return true;
 
-        /* Check current user (in case SET ROLE was used) */
+        /*
+         * Check current user (in case SET ROLE was used).
+         *
+         * The current user can be a superuser whilst the session user is
+         * not, which is what a SECURITY DEFINER function owned by a
+         * superuser does, and what an extension such as supautils does
+         * when it briefly elevates a privileged-but-not-superuser role for
+         * a single command. Asking is_member_of_role() there would answer
+         * "yes" for every configured role and restrict a session that has
+         * nothing to do with any of them, so the membership test must
+         * ignore superuserness (see the comment above this function).
+         */
         if (current_userid != session_userid &&
             (current_userid == roleid ||
-             is_member_of_role(current_userid, roleid)))
+             is_member_of_role_nosuper(current_userid, roleid)))
             return true;
     }
 
