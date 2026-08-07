@@ -12,7 +12,8 @@
 -- executes the statement. Writes carried as an intoClause (CREATE TABLE
 -- AS, CREATE MATERIALIZED VIEW AS, SELECT INTO) must be blocked, because
 -- they never reach the DML check in the executor hook as a top-level
--- INSERT/UPDATE/DELETE.
+-- INSERT/UPDATE/DELETE. Which spelling of the ANALYZE option is used, and
+-- whether DDL blocking happens to be on, must make no difference.
 
 -- Setup: clean any stale state
 RESET SESSION AUTHORIZATION;
@@ -51,15 +52,42 @@ EXPLAIN ANALYZE CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
 EXPLAIN (ANALYZE) SELECT * INTO into_blocked FROM test_explain;
 EXPLAIN (ANALYZE) CREATE MATERIALIZED VIEW mv_blocked AS SELECT * FROM test_explain;
 
+-- A repeated option takes its last value, exactly as PostgreSQL reads it,
+-- so this one does execute and must be blocked
+EXPLAIN (ANALYZE off, ANALYZE on) CREATE TABLE ctas_repeat AS SELECT * FROM test_explain;
+
+-- The same spelling the other way round only plans, and is allowed
+EXPLAIN (ANALYZE on, ANALYZE off, COSTS OFF)
+    CREATE TABLE should_not_exist3 AS SELECT * FROM test_explain;
+
+-- A top-level INSERT under EXPLAIN ANALYZE is left to the executor hook,
+-- which is why it is not handled in the utility hook
+EXPLAIN (ANALYZE) INSERT INTO test_explain VALUES (3);
+
+-- The check must not depend on block_ddl: PostgreSQL refuses the plain
+-- statement in a read-only transaction whatever our toggles say, so the
+-- EXPLAIN path must not end up weaker than it
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+SET pgedge_safesession.block_ddl = off;
+SET SESSION AUTHORIZATION safesession_explain;
+EXPLAIN (ANALYZE) CREATE TABLE ctas_no_ddl_block AS SELECT * FROM test_explain;
+
 -- Switch back to superuser to check the outcome
 RESET SESSION AUTHORIZATION;
+RESET pgedge_safesession.block_ddl;
 
 -- None of the tables or the materialized view should have been created
 SET default_transaction_read_only = off;
 SELECT count(*) AS leaked_objects
     FROM pg_class
     WHERE relname IN ('ctas_blocked', 'into_blocked', 'mv_blocked',
-                      'should_not_exist', 'should_not_exist2');
+                      'should_not_exist', 'should_not_exist2',
+                      'should_not_exist3', 'ctas_repeat',
+                      'ctas_no_ddl_block');
+
+-- ... and the blocked INSERT must not have added a row
+SELECT count(*) AS test_explain_rows FROM test_explain;
 
 -- Cleanup
 ALTER SYSTEM RESET pgedge_safesession.roles;

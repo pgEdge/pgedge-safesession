@@ -471,20 +471,26 @@ is_protected_guc_set(VariableSetStmt *stmt)
 /*
  * Does this EXPLAIN request ANALYZE (which actually executes the
  * statement, rather than only planning it)?
+ *
+ * The whole option list is walked and the last analyze wins, because
+ * that is what ExplainQuery() does when it parses the same list. Taking
+ * the first would read EXPLAIN (ANALYZE off, ANALYZE on) as a plan-only
+ * request whilst core went on to execute it.
  */
 static bool
 explain_is_analyze(ExplainStmt *stmt)
 {
     ListCell *lc;
+    bool      analyze = false;
 
     foreach(lc, stmt->options)
     {
         DefElem *opt = (DefElem *) lfirst(lc);
 
         if (strcmp(opt->defname, "analyze") == 0)
-            return defGetBoolean(opt);
+            analyze = defGetBoolean(opt);
     }
-    return false;
+    return analyze;
 }
 
 /*
@@ -554,6 +560,29 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             manage_read_only_state(restricted);
     }
 
+    /*
+     * Checks that apply to a restricted session whatever the block_*
+     * toggles say, because the statement writes and nothing else stops
+     * it.
+     *
+     * EXPLAIN ANALYZE of a write carried in an intoClause (CREATE TABLE
+     * AS, CREATE MATERIALIZED VIEW AS, SELECT ... INTO) is the one case
+     * that needs this. PostgreSQL treats EXPLAIN as strictly read-only
+     * for the purposes of its own check, so the write executes even with
+     * XactReadOnly set, and it never reaches the ExecutorStart DML check
+     * as a top-level INSERT/UPDATE/DELETE either. Gating it on block_ddl
+     * would leave the EXPLAIN path weaker than the plain statement,
+     * which PostgreSQL does refuse.
+     */
+    if (restricted && parsetree != NULL &&
+        IsA(parsetree, ExplainStmt) &&
+        explain_is_analyze((ExplainStmt *) parsetree) &&
+        explained_stmt_writes(((ExplainStmt *) parsetree)->query))
+        ereport(ERROR,
+                (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                 errmsg("cannot execute EXPLAIN ANALYZE of a writing"
+                        " statement in a read-only session")));
+
     if (restricted && parsetree != NULL && safesession_block_ddl)
     {
         NodeTag tag = nodeTag(parsetree);
@@ -593,21 +622,11 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
 
             case T_ExplainStmt:
                 /*
-                 * Plain EXPLAIN only plans the statement and is safe,
-                 * but EXPLAIN ANALYZE executes it. A write carried as
-                 * an intoClause (CREATE TABLE AS, SELECT INTO) would
-                 * run here, because it never reaches the ExecutorStart
-                 * DML check as a top-level INSERT/UPDATE/DELETE.
+                 * Plain EXPLAIN only plans the statement and is safe.
+                 * EXPLAIN ANALYZE executes it, but the write cases were
+                 * rejected above, before this switch, so that they are
+                 * caught whatever block_ddl is set to.
                  */
-                if (explain_is_analyze((ExplainStmt *) parsetree) &&
-                    explained_stmt_writes(
-                        ((ExplainStmt *) parsetree)->query))
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute EXPLAIN ANALYZE"
-                                    " of a writing statement in a"
-                                    " read-only session")));
                 break;
 
             case T_VariableSetStmt:
