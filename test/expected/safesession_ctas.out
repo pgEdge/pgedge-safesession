@@ -43,10 +43,12 @@ SELECT pg_sleep(0.5);
 SET SESSION AUTHORIZATION safesession_readonly;
 -- CREATE TABLE AS should be blocked
 CREATE TABLE test_ctas_dest AS SELECT * FROM test_ctas_src;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE TABLE AS in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- SELECT INTO should be blocked
 SELECT * INTO test_ctas_dest2 FROM test_ctas_src;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute SELECT INTO in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Regular SELECT should work
 SELECT * FROM test_ctas_src ORDER BY id;
  id |  val  

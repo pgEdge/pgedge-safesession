@@ -23,6 +23,7 @@
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
 #include "parser/analyze.h"
+#include "tcop/cmdtag.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -521,6 +522,22 @@ enforce_read_only(void)
 }
 
 /*
+ * Reject the current statement with a consistent error: the given SQLSTATE
+ * and message, plus a hint identifying SafeSession as the reason, so a
+ * user can tell that an extension (not core PostgreSQL) rejected the
+ * statement and which setting governs it. Used by both hooks.
+ */
+static void
+safesession_reject(int sqlerrcode, const char *msg)
+{
+    ereport(ERROR,
+            (errcode(sqlerrcode),
+             errmsg("%s", msg),
+             errhint("This session is restricted to read-only access"
+                     " by the pgedge_safesession extension.")));
+}
+
+/*
  * ExecutorStart hook: block DML (including data-modifying CTEs) for
  * restricted roles. Blocked function calls are handled earlier, in the
  * post_parse_analyze hook.
@@ -553,33 +570,32 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
         /* Block INSERT, UPDATE, DELETE, MERGE */
         if (safesession_block_dml)
         {
+            const char *cmd = NULL;
+
             switch (pstmt->commandType)
             {
                 case CMD_INSERT:
+                    cmd = "INSERT";
+                    break;
                 case CMD_UPDATE:
+                    cmd = "UPDATE";
+                    break;
                 case CMD_DELETE:
+                    cmd = "DELETE";
+                    break;
 #if PG_VERSION_NUM >= 150000
                 case CMD_MERGE:
-#endif
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute %s in a"
-                                    " read-only session",
-                                    pstmt->commandType ==
-                                    CMD_INSERT ?
-                                    "INSERT" :
-                                    pstmt->commandType ==
-                                    CMD_UPDATE ?
-                                    "UPDATE" :
-                                    pstmt->commandType ==
-                                    CMD_DELETE ?
-                                    "DELETE" : "MERGE")));
+                    cmd = "MERGE";
                     break;
-
+#endif
                 default:
                     break;
             }
+
+            if (cmd != NULL)
+                safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                   psprintf("cannot execute %s in a"
+                                            " read-only session", cmd));
 
             /*
              * A data-modifying CTE, e.g.
@@ -590,12 +606,10 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
              * flags this directly.
              */
             if (pstmt->hasModifyingCTE)
-                ereport(ERROR,
-                        (errcode(
-                            ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                         errmsg("cannot execute a data-modifying"
-                                " WITH clause in a read-only"
-                                " session")));
+                safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                   "cannot execute a data-modifying"
+                                   " WITH clause in a read-only"
+                                   " session");
         }
     }
 
@@ -630,11 +644,9 @@ safesession_post_parse_analyze(ParseState *pstate, Query *query
         IsTransactionState() &&
         current_role_is_restricted() &&
         query_has_blocked_function(query))
-        ereport(ERROR,
-                (errcode(
-                    ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                 errmsg("cannot execute functions that may have"
-                        " side effects in a read-only session")));
+        safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                           "cannot execute functions that may have"
+                           " side effects in a read-only session");
 }
 
 /*
@@ -825,10 +837,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
         IsA(parsetree, ExplainStmt) &&
         explain_is_analyze((ExplainStmt *) parsetree) &&
         explained_stmt_writes(((ExplainStmt *) parsetree)->query))
-        ereport(ERROR,
-                (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                 errmsg("cannot execute EXPLAIN ANALYZE of a writing"
-                        " statement in a read-only session")));
+        safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                           "cannot execute EXPLAIN ANALYZE of a writing"
+                           " statement in a read-only session");
 
     if (restricted && parsetree != NULL && safesession_block_ddl)
     {
@@ -878,12 +889,10 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                  * is rejected.
                  */
                 if (!do_block_is_trusted((DoStmt *) parsetree))
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute a DO block in an"
-                                    " untrusted language in a"
-                                    " read-only session")));
+                    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                       "cannot execute a DO block in an"
+                                       " untrusted language in a"
+                                       " read-only session");
                 break;
 
             case T_CallStmt:
@@ -893,12 +902,10 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                  * an untrusted language is rejected.
                  */
                 if (!call_target_is_trusted((CallStmt *) parsetree))
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot CALL a procedure in an"
-                                    " untrusted language in a"
-                                    " read-only session")));
+                    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                       "cannot CALL a procedure in an"
+                                       " untrusted language in a"
+                                       " read-only session");
                 break;
 
             case T_TransactionStmt:
@@ -916,12 +923,10 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                     case TRANS_STMT_PREPARE:
                     case TRANS_STMT_COMMIT_PREPARED:
                     case TRANS_STMT_ROLLBACK_PREPARED:
-                        ereport(ERROR,
-                                (errcode(
-                                    ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                                 errmsg("cannot execute two-phase"
-                                        " commit statements in a"
-                                        " read-only session")));
+                        safesession_reject(
+                            ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                            "cannot execute two-phase commit"
+                            " statements in a read-only session");
                         break;
                     default:
                         break;
@@ -940,13 +945,10 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_VariableSetStmt:
                 if (is_protected_guc_set(
                         (VariableSetStmt *) parsetree))
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot modify read-only"
-                                    " transaction settings"
-                                    " in a read-only"
-                                    " session")));
+                    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                       "cannot modify read-only"
+                                       " transaction settings in a"
+                                       " read-only session");
                 /* Other SET/RESET allowed */
                 break;
 
@@ -961,22 +963,15 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
 
                 /* Block COPY FROM */
                 if (cstmt->is_from)
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute COPY FROM"
-                                    " in a read-only"
-                                    " session")));
+                    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                       "cannot execute COPY FROM in a"
+                                       " read-only session");
 
                 /* Block COPY TO PROGRAM */
                 if (cstmt->is_program)
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot execute"
-                                    " COPY TO PROGRAM"
-                                    " in a read-only"
-                                    " session")));
+                    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                       "cannot execute COPY TO PROGRAM"
+                                       " in a read-only session");
                 break;
             }
 
@@ -984,12 +979,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                 /* Block exclusive locks */
                 if (((LockStmt *) parsetree)->mode >
                     RowShareLock)
-                    ereport(ERROR,
-                            (errcode(
-                                ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                             errmsg("cannot acquire exclusive"
-                                    " locks in a"
-                                    " read-only session")));
+                    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                       "cannot acquire exclusive locks"
+                                       " in a read-only session");
                 break;
 
             /*
@@ -999,37 +991,32 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_GrantRoleStmt:
             case T_AlterDefaultPrivilegesStmt:
             case T_AlterOwnerStmt:
-                ereport(ERROR,
-                        (errcode(
-                            ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                         errmsg("cannot execute privilege"
-                                " changes in a"
-                                " read-only session")));
+                safesession_reject(ERRCODE_INSUFFICIENT_PRIVILEGE,
+                                   "cannot execute privilege changes"
+                                   " in a read-only session");
                 break;
 
             /*
              * Block VACUUM and ANALYZE
              */
             case T_VacuumStmt:
-                ereport(ERROR,
-                        (errcode(
-                            ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                         errmsg("cannot execute VACUUM/ANALYZE"
-                                " in a read-only session")));
+                safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                                   "cannot execute VACUUM/ANALYZE in a"
+                                   " read-only session");
                 break;
 
             /*
-             * Block all other utility statements (DDL, etc.)
-             * This is a whitelist approach: anything not
-             * explicitly allowed above is blocked.
+             * Block all other utility statements (DDL, etc.).
+             * This is a whitelist approach: anything not explicitly
+             * allowed above is blocked. Name the command so the error
+             * is actionable.
              */
             default:
-                ereport(ERROR,
-                        (errcode(
-                            ERRCODE_READ_ONLY_SQL_TRANSACTION),
-                         errmsg("cannot execute utility"
-                                " commands in a"
-                                " read-only session")));
+                safesession_reject(
+                    ERRCODE_INSUFFICIENT_PRIVILEGE,
+                    psprintf("cannot execute %s in a read-only session",
+                             GetCommandTagName(
+                                 CreateCommandTag(parsetree))));
                 break;
         }
     }

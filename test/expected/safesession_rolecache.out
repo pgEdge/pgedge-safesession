@@ -34,6 +34,7 @@ GRANT INSERT ON test_cache TO safesession_cache_a;
 SET SESSION AUTHORIZATION safesession_cache_a;
 INSERT INTO test_cache VALUES (2);   -- blocked (now restricted)
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 RESET SESSION AUTHORIZATION;
 -- Changing the GUC must invalidate the cache (assign hook): role a is no
 -- longer restricted, role b now is
@@ -46,6 +47,7 @@ RESET SESSION AUTHORIZATION;
 SET SESSION AUTHORIZATION safesession_cache_b;
 INSERT INTO test_cache VALUES (4);   -- blocked (b now restricted)
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 RESET SESSION AUTHORIZATION;
 -- Final contents: seed row plus the one allowed insert (3)
 SET default_transaction_read_only = off;

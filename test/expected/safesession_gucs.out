@@ -48,8 +48,10 @@ SELECT pg_sleep(0.5);
 SET SESSION AUTHORIZATION safesession_guc_test;
 INSERT INTO test_gucs VALUES (3, 'blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CREATE TABLE test_gucs_temp (id int);
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE TABLE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 RESET SESSION AUTHORIZATION;
 -- ============================================================
 -- Test 1: block_dml = off

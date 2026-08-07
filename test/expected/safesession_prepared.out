@@ -41,11 +41,14 @@ SET SESSION AUTHORIZATION safesession_2pc;
 -- Two-phase commit statements must all be blocked
 COMMIT PREPARED 'nosuch';
 ERROR:  cannot execute two-phase commit statements in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 ROLLBACK PREPARED 'nosuch';
 ERROR:  cannot execute two-phase commit statements in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 BEGIN;
 PREPARE TRANSACTION 'nosuch';
 ERROR:  cannot execute two-phase commit statements in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 ROLLBACK;
 -- Ordinary transaction control must still work
 BEGIN;

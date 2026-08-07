@@ -52,16 +52,19 @@ SELECT * FROM test_bypass ORDER BY id;
 -- INSERT should be blocked
 INSERT INTO test_bypass VALUES (2, 'blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Try SET ROLE to unrestricted role (should still be blocked
 -- because session user is restricted)
 SET ROLE safesession_unrestricted;
 INSERT INTO test_bypass VALUES (2, 'still_blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Reset role back
 RESET ROLE;
 -- INSERT still blocked
 INSERT INTO test_bypass VALUES (2, 'still_blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup

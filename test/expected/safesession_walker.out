@@ -67,33 +67,43 @@ SET SESSION AUTHORIZATION safesession_walk;
 -- target list
 SELECT nextval('walk_seq');
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- WHERE qual
 SELECT id FROM test_walk WHERE id = nextval('walk_seq')::int;
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- ORDER BY
 SELECT id FROM test_walk ORDER BY nextval('walk_seq');
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- HAVING
 SELECT count(*) FROM test_walk HAVING count(*) > nextval('walk_seq');
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- ScalarArrayOpExpr (= ANY)
 SELECT id FROM test_walk WHERE id = ANY (ARRAY[nextval('walk_seq')::int]);
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- join qualification
 SELECT a.id FROM test_walk a JOIN test_walk2 b
     ON a.id = b.id + nextval('walk_seq')::int;
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- correlated sub-select
 SELECT (SELECT nextval('walk_seq')) FROM test_walk;
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- common table expression
 WITH c AS (SELECT nextval('walk_seq') AS n) SELECT n FROM c;
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Other denylisted built-ins
 SELECT pg_advisory_lock(42);
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 SELECT set_config('work_mem', '5MB', false);
 ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- These must all be allowed:
 SELECT walk_vol(1);                 -- volatile, trusted language
  walk_vol 

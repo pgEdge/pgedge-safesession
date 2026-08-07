@@ -43,6 +43,7 @@ COPY test_copy TO STDOUT;
 -- COPY FROM should be blocked
 COPY test_copy FROM STDIN;
 ERROR:  cannot execute COPY FROM in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup

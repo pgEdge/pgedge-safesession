@@ -87,6 +87,7 @@ SELECT func_read();
 -- Write PL/pgSQL function should be blocked
 SELECT func_write();
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CONTEXT:  SQL statement "INSERT INTO test_func VALUES (99, 'from_function')"
 PL/pgSQL function func_write() line 3 at SQL statement
 -- Read-only SQL function should work
@@ -99,6 +100,7 @@ SELECT func_sql_read();
 -- Write SQL function should be blocked
 SELECT func_sql_write();
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CONTEXT:  SQL function "func_sql_write" statement 1
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
