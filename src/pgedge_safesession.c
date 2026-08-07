@@ -468,6 +468,59 @@ is_protected_guc_set(VariableSetStmt *stmt)
     return false;
 }
 
+/*
+ * Does this EXPLAIN request ANALYZE (which actually executes the
+ * statement, rather than only planning it)?
+ *
+ * The whole option list is walked and the last analyze wins, because
+ * that is what ExplainQuery() does when it parses the same list. Taking
+ * the first would read EXPLAIN (ANALYZE off, ANALYZE on) as a plan-only
+ * request whilst core went on to execute it.
+ */
+static bool
+explain_is_analyze(ExplainStmt *stmt)
+{
+    ListCell *lc;
+    bool      analyze = false;
+
+    foreach(lc, stmt->options)
+    {
+        DefElem *opt = (DefElem *) lfirst(lc);
+
+        if (strcmp(opt->defname, "analyze") == 0)
+            analyze = defGetBoolean(opt);
+    }
+    return analyze;
+}
+
+/*
+ * Would the statement wrapped by EXPLAIN write data if executed?
+ *
+ * By the time the utility hook runs, parse analysis has already replaced
+ * ExplainStmt->query with an analyzed Query. We only need the write cases
+ * that escape the DML check in ExecutorStart: CREATE TABLE AS, CREATE
+ * MATERIALIZED VIEW AS and SELECT ... INTO. All three become a utility
+ * Query whose utilityStmt is a CreateTableAsStmt, carrying the write in
+ * an intoClause rather than as a top-level INSERT/UPDATE/DELETE.
+ *
+ * A top-level INSERT/UPDATE/DELETE/MERGE wrapped in EXPLAIN ANALYZE is
+ * already blocked by ExecutorStart, so it is not handled here.
+ */
+static bool
+explained_stmt_writes(Node *query)
+{
+    Query *q;
+
+    if (query == NULL || !IsA(query, Query))
+        return false;
+
+    q = (Query *) query;
+
+    return (q->commandType == CMD_UTILITY &&
+            q->utilityStmt != NULL &&
+            IsA(q->utilityStmt, CreateTableAsStmt));
+}
+
 
 /*
  * ProcessUtility hook: block DDL and other write operations.
@@ -507,6 +560,29 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             manage_read_only_state(restricted);
     }
 
+    /*
+     * Checks that apply to a restricted session whatever the block_*
+     * toggles say, because the statement writes and nothing else stops
+     * it.
+     *
+     * EXPLAIN ANALYZE of a write carried in an intoClause (CREATE TABLE
+     * AS, CREATE MATERIALIZED VIEW AS, SELECT ... INTO) is the one case
+     * that needs this. PostgreSQL treats EXPLAIN as strictly read-only
+     * for the purposes of its own check, so the write executes even with
+     * XactReadOnly set, and it never reaches the ExecutorStart DML check
+     * as a top-level INSERT/UPDATE/DELETE either. Gating it on block_ddl
+     * would leave the EXPLAIN path weaker than the plain statement,
+     * which PostgreSQL does refuse.
+     */
+    if (restricted && parsetree != NULL &&
+        IsA(parsetree, ExplainStmt) &&
+        explain_is_analyze((ExplainStmt *) parsetree) &&
+        explained_stmt_writes(((ExplainStmt *) parsetree)->query))
+        ereport(ERROR,
+                (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                 errmsg("cannot execute EXPLAIN ANALYZE of a writing"
+                        " statement in a read-only session")));
+
     if (restricted && parsetree != NULL && safesession_block_ddl)
     {
         NodeTag tag = nodeTag(parsetree);
@@ -518,7 +594,6 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              * roles:
              *
              * - Transaction control
-             * - EXPLAIN (does not execute writes)
              * - PREPARE/EXECUTE/DEALLOCATE
              * - SET/RESET (except protected GUCs and
              *   SET TRANSACTION READ WRITE)
@@ -531,7 +606,6 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              *   ExecutorStart)
              */
             case T_TransactionStmt:
-            case T_ExplainStmt:
             case T_PrepareStmt:
             case T_ExecuteStmt:
             case T_DeallocateStmt:
@@ -544,6 +618,15 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_CheckPointStmt:
             case T_DoStmt:
                 /* These are allowed */
+                break;
+
+            case T_ExplainStmt:
+                /*
+                 * Plain EXPLAIN only plans the statement and is safe.
+                 * EXPLAIN ANALYZE executes it, but the write cases were
+                 * rejected above, before this switch, so that they are
+                 * caught whatever block_ddl is set to.
+                 */
                 break;
 
             case T_VariableSetStmt:
