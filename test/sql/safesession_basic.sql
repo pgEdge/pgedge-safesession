@@ -65,7 +65,8 @@ RESET work_mem;
 -- Protected GUC SET should be blocked
 SET default_transaction_read_only = off;
 
--- RESET ALL should be blocked
+-- RESET ALL is allowed: enforcement is re-asserted per statement, so it
+-- cannot relax the restriction, and blocking it would break poolers
 RESET ALL;
 
 -- Switch back to superuser for cleanup

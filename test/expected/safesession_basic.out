@@ -91,9 +91,9 @@ RESET work_mem;
 -- Protected GUC SET should be blocked
 SET default_transaction_read_only = off;
 ERROR:  cannot modify read-only transaction settings in a read-only session
--- RESET ALL should be blocked
+-- RESET ALL is allowed: enforcement is re-asserted per statement, so it
+-- cannot relax the restriction, and blocking it would break poolers
 RESET ALL;
-ERROR:  cannot modify read-only transaction settings in a read-only session
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
