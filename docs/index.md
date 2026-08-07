@@ -149,10 +149,12 @@ the following operations are blocked:
   blocked for the same reason.
 - **Exclusive locks**: LOCK TABLE with modes above
   ROW SHARE
-- **GUC tampering**: SET/RESET of `transaction_read_only`
-  or `default_transaction_read_only`, SET TRANSACTION
-  READ WRITE, and SET SESSION CHARACTERISTICS AS
-  TRANSACTION READ WRITE
+- **GUC tampering**: any attempt to relax
+  `transaction_read_only` or `default_transaction_read_only`,
+  whether by setting one of them to a false value, by
+  RESET or SET TO DEFAULT, or through SET TRANSACTION READ
+  WRITE and SET SESSION CHARACTERISTICS AS TRANSACTION READ
+  WRITE
 
 ## What is Allowed
 
@@ -167,6 +169,12 @@ the following operations are blocked:
   (e.g., work_mem)
 - **SET TRANSACTION**: ISOLATION LEVEL and READ ONLY
   (tightening the transaction is allowed)
+- **Asserting read-only**: setting `transaction_read_only`
+  or `default_transaction_read_only` to on, which asks for
+  the state that is already enforced. Clients that assert
+  read-only on every connection they open, such as a
+  connection pool with writes disabled, therefore work
+  against restricted roles.
 - **SHOW**: display settings
 - **LISTEN / NOTIFY**: notification channels
 - **Cursors**: DECLARE, FETCH, CLOSE

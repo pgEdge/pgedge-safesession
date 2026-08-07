@@ -669,6 +669,35 @@ safesession_post_parse_analyze(ParseState *pstate, Query *query
 }
 
 /*
+ * Does this SET ask for read-only to be turned on?
+ *
+ * A statement that asks for the state we already enforce agrees with the
+ * restriction rather than working around it, so there is nothing to
+ * protect against, and rejecting it would lock out any client that
+ * defensively asserts read-only on the sessions it opens (a connection
+ * pool that runs SET default_transaction_read_only = on for every new
+ * connection would never obtain a usable one).
+ *
+ * ExtractSetVariableArgs() gives us the requested value for
+ * SET ... = value, and the live value for SET ... FROM CURRENT, which is
+ * therefore a no-op and judged on what the setting already is. It returns
+ * NULL for RESET and SET ... TO DEFAULT, both of which head back towards
+ * read-write and so remain protected, as does anything that does not
+ * parse as a true boolean.
+ */
+static bool
+guc_set_requests_read_only(VariableSetStmt *stmt)
+{
+    char *value = ExtractSetVariableArgs(stmt);
+    bool  requested;
+
+    if (value == NULL || !parse_bool(value, &requested))
+        return false;
+
+    return requested;
+}
+
+/*
  * Check if a VariableSetStmt targets a read-only GUC we protect.
  */
 static bool
@@ -681,18 +710,21 @@ is_protected_guc_set(VariableSetStmt *stmt)
     {
         /*
          * Both the transaction-scoped transaction_read_only and the
-         * session default default_transaction_read_only are protected.
-         * transaction_read_only is a plain PGC_USERSET GUC any user may
-         * set, so without this a restricted role's SET would report
-         * success even though enforcement re-asserts read-only on the
-         * next statement.
+         * session default default_transaction_read_only are protected,
+         * but only against being relaxed. transaction_read_only is a
+         * plain PGC_USERSET GUC any user may set, so without this a
+         * restricted role's SET would report success even though
+         * enforcement re-asserts read-only on the next statement.
+         * Setting either of them to on cannot mislead anyone that way,
+         * so it is allowed, exactly as SET TRANSACTION READ ONLY is
+         * below.
          */
         if (stmt->name != NULL &&
             (pg_strcasecmp(stmt->name,
                            "default_transaction_read_only") == 0 ||
              pg_strcasecmp(stmt->name,
                            "transaction_read_only") == 0))
-            return true;
+            return !guc_set_requests_read_only(stmt);
     }
 
     /*
