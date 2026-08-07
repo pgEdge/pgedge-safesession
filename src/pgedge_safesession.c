@@ -518,9 +518,19 @@ is_protected_guc_set(VariableSetStmt *stmt)
         stmt->kind == VAR_SET_CURRENT ||
         stmt->kind == VAR_RESET)
     {
+        /*
+         * Both the transaction-scoped transaction_read_only and the
+         * session default default_transaction_read_only are protected.
+         * transaction_read_only is a plain PGC_USERSET GUC any user may
+         * set, so without this a restricted role's SET would report
+         * success even though enforcement re-asserts read-only on the
+         * next statement.
+         */
         if (stmt->name != NULL &&
-            pg_strcasecmp(stmt->name,
-                          "default_transaction_read_only") == 0)
+            (pg_strcasecmp(stmt->name,
+                           "default_transaction_read_only") == 0 ||
+             pg_strcasecmp(stmt->name,
+                           "transaction_read_only") == 0))
             return true;
     }
 
