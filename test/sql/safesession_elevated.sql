@@ -85,13 +85,10 @@ RESET SESSION AUTHORIZATION;
 -- ============================================================
 -- A genuine member must stay restricted through the elevation
 -- ============================================================
--- The plans PL/pgSQL cached for its expressions during the block above
--- were built whilst this session was unrestricted, and the function check
--- runs in post_parse_analyze, i.e. only when an expression is parsed.
--- Discard them, so that what follows measures the restriction rather than
--- the contents of the plan cache.
-DISCARD PLANS;
-
+-- No DISCARD PLANS is needed here, although it was when this test was
+-- first written: the plans PL/pgSQL cached during the block above were
+-- built whilst the session was unrestricted, and becoming restricted now
+-- discards them (see safesession_plancache).
 SET SESSION AUTHORIZATION safesession_elev_member;
 SET work_mem = '4MB';
 

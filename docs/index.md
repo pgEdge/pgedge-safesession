@@ -241,6 +241,25 @@ the session user, so such elevation is not a way out of the
 restriction either: a restricted session stays restricted
 inside a superuser-owned SECURITY DEFINER function.
 
+### Restriction Changes and Cached Plans
+
+Side-effecting function calls are detected when a statement
+or expression is parsed, rather than when it is executed, so
+a plan cached before a session became restricted would
+otherwise be replayed without the check running again. That
+matters because a session can become restricted part-way
+through its life: the roles list can be edited and the
+configuration reloaded, or a role can be granted membership
+of a listed role, whilst sessions are open.
+
+Becoming restricted is therefore treated as an invalidation
+event, and the session's cached plans are discarded exactly
+as `DISCARD PLANS` does, so that everything is re-analysed
+under the new state. This covers prepared statements and the
+plans PL/pgSQL caches for its expressions alike. Plans built
+whilst a session was restricted are left alone when the
+restriction is lifted, since they have already been checked.
+
 ### Belt-and-Suspenders
 
 For every restricted session SafeSession also forces the

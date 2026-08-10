@@ -70,6 +70,16 @@ and this project adheres to
   was listed nowhere and granted nothing. Membership now
   uses `is_member_of_role_nosuper()` and follows actual
   grants only.
+- Side-effecting function calls are detected when a statement
+  is parsed, so a plan cached before a session became
+  restricted was replayed without the check running again. A
+  session that became restricted part-way through its life,
+  because the roles list was reloaded or because a role was
+  granted membership of a listed role, could therefore go on
+  calling blocked functions through any prepared statement or
+  PL/pgSQL expression it had already executed. Becoming
+  restricted now discards the session's cached plans, so they
+  are re-analysed under the new state.
 
 ## [1.0-alpha1] - Unreleased
 
