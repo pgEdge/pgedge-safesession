@@ -59,6 +59,17 @@ and this project adheres to
   The same evaluation happens for `EXPLAIN EXECUTE`, with or
   without `ANALYZE`, and for `CREATE TABLE AS ... EXECUTE`,
   and all three are now checked.
+- Role membership was tested with `is_member_of_role()`,
+  which reports a superuser as a member of every role in the
+  database with no grant behind it. Any role that briefly
+  acts as a superuser whilst its session user does not, such
+  as one inside a SECURITY DEFINER function owned by a
+  superuser or one elevated for a single command by an
+  extension like supautils, was therefore treated as a
+  member of every restricted role and blocked, even when it
+  was listed nowhere and granted nothing. Membership now
+  uses `is_member_of_role_nosuper()` and follows actual
+  grants only.
 
 ## [1.0-alpha1] - Unreleased
 
