@@ -86,6 +86,23 @@ SHOW work_mem;
 RESET SESSION AUTHORIZATION;
 SET pgedge_safesession.block_ddl = on;
 
+-- EXPLAIN and CREATE TABLE AS can be combined, which nests two wrappers
+-- around the EXECUTE rather than one. Without ANALYZE nothing is written,
+-- so no other check applies and this is reachable at the default settings;
+-- with ANALYZE the write is refused first, by the analyze-of-a-write check.
+SET SESSION AUTHORIZATION safesession_exec;
+
+EXPLAIN (COSTS OFF) CREATE TABLE test_execparams AS
+    EXECUTE ps (set_config('work_mem', '18MB', false));
+SHOW work_mem;
+
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+    CREATE TABLE test_execparams AS
+    EXECUTE ps (set_config('work_mem', '19MB', false));
+SHOW work_mem;
+
+RESET SESSION AUTHORIZATION;
+
 -- With block_c_functions off, SafeSession's own function check is skipped
 -- here as it is everywhere else, and the parameter takes effect
 SET pgedge_safesession.block_c_functions = off;

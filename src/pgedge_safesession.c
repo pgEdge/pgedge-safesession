@@ -840,31 +840,47 @@ explained_stmt_writes(Node *query)
 }
 
 /*
- * If this statement is an EXECUTE, return it, unwrapping the utility Query
- * that parse analysis plasters over the statement carried by EXPLAIN and
- * CREATE TABLE AS. Returns NULL for anything else.
+ * If this statement is an EXECUTE, or carries one, return that ExecuteStmt;
+ * otherwise return NULL.
+ *
+ * EXPLAIN and CREATE TABLE AS each hold the statement they wrap in a field
+ * that parse analysis has replaced with a utility Query, and the two can be
+ * combined, so EXPLAIN CREATE TABLE AS EXECUTE nests two of them:
+ *
+ *     ExplainStmt->query -> Query->utilityStmt -> CreateTableAsStmt->query
+ *         -> Query->utilityStmt -> ExecuteStmt
+ *
+ * Descend through as many of those layers as are present rather than a
+ * fixed number of them. Every branch below moves strictly inwards through a
+ * finite parse tree, so this terminates; in practice the grammar allows at
+ * most the three levels shown above.
  */
 static ExecuteStmt *
 extract_execute_stmt(Node *node)
 {
-    if (node == NULL)
-        return NULL;
-
-    if (IsA(node, Query))
+    for (;;)
     {
-        Query *q = (Query *) node;
-
-        if (q->commandType != CMD_UTILITY)
-            return NULL;
-        node = q->utilityStmt;
         if (node == NULL)
             return NULL;
+
+        if (IsA(node, ExecuteStmt))
+            return (ExecuteStmt *) node;
+
+        if (IsA(node, Query))
+        {
+            Query *q = (Query *) node;
+
+            if (q->commandType != CMD_UTILITY)
+                return NULL;
+            node = q->utilityStmt;
+        }
+        else if (IsA(node, ExplainStmt))
+            node = ((ExplainStmt *) node)->query;
+        else if (IsA(node, CreateTableAsStmt))
+            node = ((CreateTableAsStmt *) node)->query;
+        else
+            return NULL;
     }
-
-    if (IsA(node, ExecuteStmt))
-        return (ExecuteStmt *) node;
-
-    return NULL;
 }
 
 /*
@@ -1006,21 +1022,13 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
      * itself: EXECUTE stays allowed either way.
      *
      * EXPLAIN EXECUTE evaluates the parameters too, with or without
-     * ANALYZE, and so does CREATE TABLE AS ... EXECUTE, so both wrappers
-     * are checked as well as a bare EXECUTE.
+     * ANALYZE, and so do CREATE TABLE AS ... EXECUTE and the two combined,
+     * so extract_execute_stmt() looks through those wrappers as well as
+     * recognising a bare EXECUTE.
      */
     if (restricted && safesession_block_c_functions && parsetree != NULL)
     {
-        ExecuteStmt *estmt = NULL;
-
-        if (IsA(parsetree, ExecuteStmt))
-            estmt = (ExecuteStmt *) parsetree;
-        else if (IsA(parsetree, ExplainStmt))
-            estmt = extract_execute_stmt(
-                ((ExplainStmt *) parsetree)->query);
-        else if (IsA(parsetree, CreateTableAsStmt))
-            estmt = extract_execute_stmt(
-                ((CreateTableAsStmt *) parsetree)->query);
+        ExecuteStmt *estmt = extract_execute_stmt(parsetree);
 
         if (estmt != NULL &&
             execute_params_have_blocked_function(estmt, queryString))
