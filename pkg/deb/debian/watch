@@ -1,0 +1,2 @@
+version=4
+https://github.com/pgEdge/pgedge-safesession/tags .*/v(.*).tar.gz

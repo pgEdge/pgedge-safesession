@@ -1,0 +1,36 @@
+Source: pgedge-safesession
+Section: database
+Priority: optional
+Maintainer: pgEdge Build Team <support@pgedge.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ pgedge-postgresql-all <!nocheck>,
+ pgedge-postgresql-server-dev-PG_MAJOR_VERSION,
+ pgedge-postgresql-server-dev-all,
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/pgEdge/pgedge-safesession
+
+Package: pgedge-postgresql-PG_MAJOR_VERSION-safesession
+Architecture: any
+Depends:
+ ${misc:Depends},
+ pgedge-postgresql-PG_MAJOR_VERSION,
+ ${shlibs:Depends},
+Conflicts:
+ postgresql-PG_MAJOR_VERSION-safesession,
+Provides:
+ postgresql-PG_MAJOR_VERSION-safesession,
+Replaces:
+ postgresql-PG_MAJOR_VERSION-safesession,
+Breaks:
+ postgresql-PG_MAJOR_VERSION-safesession,
+Description: read-only session enforcement for PostgreSQL roles
+ pgEdge SafeSession is a PostgreSQL extension that enforces read-only
+ sessions for specified database roles, using executor and utility hooks to
+ block DML, DDL, COPY FROM, GRANT/REVOKE, VACUUM/ANALYZE and volatile
+ C-language function execution.
+ .
+ The module must be listed in shared_preload_libraries and the restricted
+ roles configured through pgedge_safesession.roles before enforcement takes
+ effect.
