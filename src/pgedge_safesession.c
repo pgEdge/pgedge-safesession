@@ -9,6 +9,13 @@
  */
 #include "postgres.h"
 
+/*
+ * GETSTRUCT is a static inline function as of PostgreSQL 19, and reaching it
+ * through another header's include chain no longer works. Include it
+ * explicitly; on PostgreSQL 14-18, where GETSTRUCT is a macro, this is a
+ * no-op.
+ */
+#include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/pg_aggregate.h"
@@ -730,7 +737,15 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
  */
 static void
 safesession_post_parse_analyze(ParseState *pstate, Query *query
-#if PG_VERSION_NUM >= 140000
+#if PG_VERSION_NUM >= 190000
+                               /*
+                                * PostgreSQL 19 made jstate const in
+                                * post_parse_analyze_hook_type; keeping the
+                                * older signature here is an incompatible
+                                * function pointer assignment.
+                                */
+                               , const JumbleState *jstate
+#elif PG_VERSION_NUM >= 140000
                                , JumbleState *jstate
 #endif
                                )
