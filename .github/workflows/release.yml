@@ -188,6 +188,7 @@ jobs:
 
             - name: Assert tag matches pgedge_safesession.control default_version
               env:
+                  CV:            ${{ steps.parse.outputs.version }}
                   EFFECTIVE_TAG: ${{ steps.parse.outputs.effective_tag }}
               run: |
                   set -euo pipefail
@@ -201,21 +202,19 @@ jobs:
                       exit 1
                   fi
 
-                  # This extension's version keeps its pre-release suffix
-                  # (default_version = '1.0-alpha1'), while the parsed
-                  # component-version is always suffix-stripped ('1.0'). So
-                  # compare against the whole tag instead: the tag must be
-                  # v<default_version>, optionally followed by a further
-                  # '-<retag>' (e.g. v1.0-alpha1-test1 for a daily rebuild).
-                  tag_ver="${EFFECTIVE_TAG#v}"
-                  echo "pgedge_safesession.control default_version=$src_ver, tag=$EFFECTIVE_TAG"
-                  case "$tag_ver" in
-                      "$src_ver"|"$src_ver"-*) ;;
-                      *)
-                          echo "::error::Tag ${EFFECTIVE_TAG} does not match pgedge_safesession.control default_version ${src_ver}. Bump default_version (and add the matching sql/pgedge_safesession--*.sql script) or fix the tag."
-                          exit 1
-                          ;;
-                  esac
+                  # Compare version SERIES, not the whole string. default_version
+                  # may carry a pre-release marker ('1.0-alpha1') while the parsed
+                  # component-version is always suffix-stripped ('1.0'), and the
+                  # tag's single dash-suffix slot is what selects the release
+                  # channel (v1.0-test1 → daily). Requiring the tag to reproduce
+                  # default_version verbatim would force the pre-release marker
+                  # into every tag, so only the numeric series has to agree.
+                  src_series="${src_ver%%-*}"
+                  echo "pgedge_safesession.control default_version=$src_ver (series $src_series), tag=$EFFECTIVE_TAG (version $CV)"
+                  if [ "$src_series" != "$CV" ]; then
+                      echo "::error::Tag ${EFFECTIVE_TAG} implies version ${CV} but pgedge_safesession.control says ${src_ver}. Bump default_version (and add the matching sql/pgedge_safesession--*.sql script) or fix the tag."
+                      exit 1
+                  fi
 
             - name: Route suffix → repo_type
               id: route
@@ -224,9 +223,9 @@ jobs:
                   EFFECTIVE_TAG: ${{ steps.parse.outputs.effective_tag }}
               run: |
                   set -euo pipefail
-                  # Routing is policy and stays per-repo. A retagged pre-release
-                  # (v1.0-alpha1-test1 → suffix 'alpha1-test1') routes on its
-                  # trailing component, so a -test/-dev rebuild lands in daily.
+                  # Routing is policy and stays per-repo. Matched loosely so a
+                  # compound suffix (v1.0-alpha1-test1 → 'alpha1-test1') still
+                  # lands in daily rather than staging.
                   case "$SUFFIX" in
                       *test*|*dev*)              repo_type=daily   ;;
                       rc*|beta*|alpha*|"")       repo_type=staging ;;
