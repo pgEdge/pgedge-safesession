@@ -21,71 +21,66 @@ CREATE TABLE test_ddl (id int, val text);
 GRANT ALL ON test_ddl TO safesession_readonly;
 GRANT CREATE ON SCHEMA public TO safesession_readonly;
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_readonly';
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
 -- CREATE TABLE should be blocked
 CREATE TABLE test_ddl_new (id int);
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE TABLE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- ALTER TABLE should be blocked
 ALTER TABLE test_ddl ADD COLUMN extra text;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute ALTER TABLE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- DROP TABLE should be blocked
 DROP TABLE test_ddl;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute DROP TABLE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- TRUNCATE should be blocked
 TRUNCATE test_ddl;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute TRUNCATE TABLE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- CREATE INDEX should be blocked
 CREATE INDEX test_ddl_idx ON test_ddl (id);
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE INDEX in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- CREATE FUNCTION should be blocked
 CREATE FUNCTION test_ddl_func() RETURNS void
     LANGUAGE sql AS $$ SELECT 1; $$;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE FUNCTION in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- CREATE VIEW should be blocked
 CREATE VIEW test_ddl_view AS SELECT * FROM test_ddl;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE VIEW in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- CREATE SEQUENCE should be blocked
 CREATE SEQUENCE test_ddl_seq;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE SEQUENCE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- CREATE TYPE should be blocked
 CREATE TYPE test_ddl_type AS (x int, y int);
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE TYPE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- COMMENT should be blocked
 COMMENT ON TABLE test_ddl IS 'test comment';
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute COMMENT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- VACUUM should be blocked
 VACUUM test_ddl;
 ERROR:  cannot execute VACUUM/ANALYZE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- ANALYZE should be blocked
 ANALYZE test_ddl;
 ERROR:  cannot execute VACUUM/ANALYZE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- GRANT should be blocked
 GRANT SELECT ON test_ddl TO safesession_readonly;
 ERROR:  cannot execute privilege changes in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 REVOKE CREATE ON SCHEMA public FROM safesession_readonly;
 DROP TABLE test_ddl;
 DROP ROLE safesession_readonly;

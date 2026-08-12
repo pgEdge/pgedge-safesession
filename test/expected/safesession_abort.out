@@ -25,24 +25,13 @@ CREATE TABLE test_abort (id int);
 INSERT INTO test_abort VALUES (1);
 GRANT SELECT, INSERT ON test_abort TO safesession_abort;
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_abort';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_abort';
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_abort;
 -- Enforcement is active for this role
 INSERT INTO test_abort VALUES (2);
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- ROLLBACK after an error must succeed without crashing the backend
 BEGIN;
 SELECT 1/0;
@@ -62,16 +51,11 @@ SELECT count(*) FROM test_abort;
 
 INSERT INTO test_abort VALUES (3);
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP TABLE test_abort;
 DROP ROLE safesession_abort;
 DROP EXTENSION pgedge_safesession;

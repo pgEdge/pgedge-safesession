@@ -27,19 +27,7 @@ GRANT ALL ON test_bypass TO safesession_unrestricted;
 -- Allow restricted role to SET ROLE to unrestricted
 GRANT safesession_unrestricted TO safesession_readonly;
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_readonly';
 -- Connect as restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
 -- SELECT should work
@@ -52,26 +40,23 @@ SELECT * FROM test_bypass ORDER BY id;
 -- INSERT should be blocked
 INSERT INTO test_bypass VALUES (2, 'blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Try SET ROLE to unrestricted role (should still be blocked
 -- because session user is restricted)
 SET ROLE safesession_unrestricted;
 INSERT INTO test_bypass VALUES (2, 'still_blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Reset role back
 RESET ROLE;
 -- INSERT still blocked
 INSERT INTO test_bypass VALUES (2, 'still_blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP TABLE test_bypass;
 REVOKE safesession_unrestricted FROM safesession_readonly;
 DROP ROLE safesession_unrestricted;

@@ -1,0 +1,95 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
+-- EXPLAIN tests for pgEdge SafeSession
+-- Plain EXPLAIN only plans and must be allowed, but EXPLAIN ANALYZE
+-- executes the statement. Writes carried as an intoClause (CREATE TABLE
+-- AS, CREATE MATERIALIZED VIEW AS, SELECT INTO) must be blocked, because
+-- they never reach the DML check in the executor hook as a top-level
+-- INSERT/UPDATE/DELETE. Which spelling of the ANALYZE option is used, and
+-- whether DDL blocking happens to be on, must make no difference.
+
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP TABLE IF EXISTS test_explain;
+DROP ROLE IF EXISTS safesession_explain;
+
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+
+CREATE ROLE safesession_explain LOGIN;
+CREATE TABLE test_explain (id int);
+INSERT INTO test_explain VALUES (1), (2);
+GRANT SELECT ON test_explain TO safesession_explain;
+-- Grant CREATE so the write is what fails, not a schema permission check
+-- (public loses its default CREATE grant on PostgreSQL 15+).
+GRANT CREATE ON SCHEMA public TO safesession_explain;
+
+-- Configure the restricted role
+SET pgedge_safesession.roles = 'safesession_explain';
+
+-- Switch to the restricted role (changes the session user)
+SET SESSION AUTHORIZATION safesession_explain;
+
+-- Plain EXPLAIN only plans; allowed (COSTS OFF for deterministic output)
+EXPLAIN (COSTS OFF) SELECT * FROM test_explain;
+
+-- EXPLAIN of a writing statement without ANALYZE only plans; allowed
+EXPLAIN (COSTS OFF) CREATE TABLE should_not_exist AS SELECT * FROM test_explain;
+EXPLAIN (ANALYZE false, COSTS OFF) SELECT * INTO should_not_exist2 FROM test_explain;
+
+-- EXPLAIN ANALYZE of a write must be blocked, in every spelling
+EXPLAIN (ANALYZE) CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
+EXPLAIN ANALYZE CREATE TABLE ctas_blocked AS SELECT * FROM test_explain;
+EXPLAIN (ANALYZE) SELECT * INTO into_blocked FROM test_explain;
+EXPLAIN (ANALYZE) CREATE MATERIALIZED VIEW mv_blocked AS SELECT * FROM test_explain;
+
+-- A repeated option takes its last value, exactly as PostgreSQL reads it,
+-- so this one does execute and must be blocked
+EXPLAIN (ANALYZE off, ANALYZE on) CREATE TABLE ctas_repeat AS SELECT * FROM test_explain;
+
+-- The same spelling the other way round only plans, and is allowed
+EXPLAIN (ANALYZE on, ANALYZE off, COSTS OFF)
+    CREATE TABLE should_not_exist3 AS SELECT * FROM test_explain;
+
+-- A top-level INSERT under EXPLAIN ANALYZE is left to the executor hook,
+-- which is why it is not handled in the utility hook
+EXPLAIN (ANALYZE) INSERT INTO test_explain VALUES (3);
+
+-- The check must not depend on block_ddl: PostgreSQL refuses the plain
+-- statement in a read-only transaction whatever our toggles say, so the
+-- EXPLAIN path must not end up weaker than it
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+SET pgedge_safesession.block_ddl = off;
+SET SESSION AUTHORIZATION safesession_explain;
+EXPLAIN (ANALYZE) CREATE TABLE ctas_no_ddl_block AS SELECT * FROM test_explain;
+
+-- Switch back to superuser to check the outcome
+RESET SESSION AUTHORIZATION;
+RESET pgedge_safesession.block_ddl;
+
+-- None of the tables or the materialized view should have been created
+SET default_transaction_read_only = off;
+SELECT count(*) AS leaked_objects
+    FROM pg_class
+    WHERE relname IN ('ctas_blocked', 'into_blocked', 'mv_blocked',
+                      'should_not_exist', 'should_not_exist2',
+                      'should_not_exist3', 'ctas_repeat',
+                      'ctas_no_ddl_block');
+
+-- ... and the blocked INSERT must not have added a row
+SELECT count(*) AS test_explain_rows FROM test_explain;
+
+-- Cleanup
+RESET pgedge_safesession.roles;
+REVOKE ALL ON SCHEMA public FROM safesession_explain;
+DROP TABLE test_explain;
+DROP ROLE safesession_explain;
+DROP EXTENSION pgedge_safesession;

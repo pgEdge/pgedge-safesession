@@ -23,19 +23,7 @@ INSERT INTO test_advanced VALUES (1, 'hello'), (2, 'world');
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_advanced
     TO safesession_adv;
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_adv';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_adv';
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_adv;
 -- SELECT with WHERE clause should work
@@ -76,16 +64,19 @@ PREPARE write_plan AS INSERT INTO test_advanced VALUES (3, 'blocked');
 -- EXECUTE it (should be blocked at executor level)
 EXECUTE write_plan;
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Cleanup the prepared statement
 DEALLOCATE write_plan;
 -- DO block with inner write should be blocked
 DO $$ BEGIN INSERT INTO test_advanced VALUES (3, 'blocked'); END; $$;
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CONTEXT:  SQL statement "INSERT INTO test_advanced VALUES (3, 'blocked')"
 PL/pgSQL function inline_code_block line 1 at SQL statement
 -- SET TRANSACTION READ WRITE should be blocked
 SET TRANSACTION READ WRITE;
 ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- SET TRANSACTION ISOLATION LEVEL should be allowed
 BEGIN;
 SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
@@ -99,13 +90,7 @@ COMMIT;
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP TABLE test_advanced;
 DROP ROLE safesession_adv;
 DROP EXTENSION pgedge_safesession;

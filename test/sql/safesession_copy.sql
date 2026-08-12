@@ -24,9 +24,7 @@ INSERT INTO test_copy VALUES (1, 'hello'), (2, 'world');
 GRANT ALL ON test_copy TO safesession_readonly;
 
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_readonly';
 
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
@@ -41,8 +39,7 @@ COPY test_copy FROM STDIN;
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_copy;
 DROP ROLE safesession_readonly;
 DROP EXTENSION pgedge_safesession;

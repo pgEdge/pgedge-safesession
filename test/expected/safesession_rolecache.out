@@ -1,0 +1,66 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- Role-cache invalidation tests for pgEdge SafeSession
+-- The set of restricted role OIDs is cached per backend and rebuilt when
+-- the roles GUC changes (assign hook) or when pg_authid changes (a role
+-- created, dropped or renamed; syscache callback). These tests exercise
+-- both invalidation paths within a single long-lived session, so a stale
+-- cache would show up as a wrong restriction decision.
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP TABLE IF EXISTS test_cache;
+NOTICE:  table "test_cache" does not exist, skipping
+DROP ROLE IF EXISTS safesession_cache_a;
+NOTICE:  role "safesession_cache_a" does not exist, skipping
+DROP ROLE IF EXISTS safesession_cache_b;
+NOTICE:  role "safesession_cache_b" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE TABLE test_cache (id int);
+INSERT INTO test_cache VALUES (1);
+-- Name a role that does not exist yet: the cache is built without it
+SET pgedge_safesession.roles = 'safesession_cache_a';
+WARNING:  pgedge_safesession.roles: role "safesession_cache_a" does not exist
+-- Creating it must invalidate the cache (pg_authid syscache callback), so
+-- the new role is picked up as restricted
+CREATE ROLE safesession_cache_a LOGIN;
+GRANT INSERT ON test_cache TO safesession_cache_a;
+SET SESSION AUTHORIZATION safesession_cache_a;
+INSERT INTO test_cache VALUES (2);   -- blocked (now restricted)
+ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+RESET SESSION AUTHORIZATION;
+-- Changing the GUC must invalidate the cache (assign hook): role a is no
+-- longer restricted, role b now is
+CREATE ROLE safesession_cache_b LOGIN;
+GRANT INSERT ON test_cache TO safesession_cache_b;
+SET pgedge_safesession.roles = 'safesession_cache_b';
+SET SESSION AUTHORIZATION safesession_cache_a;
+INSERT INTO test_cache VALUES (3);   -- allowed (a no longer restricted)
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION safesession_cache_b;
+INSERT INTO test_cache VALUES (4);   -- blocked (b now restricted)
+ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+RESET SESSION AUTHORIZATION;
+-- Final contents: seed row plus the one allowed insert (3)
+SET default_transaction_read_only = off;
+SELECT id FROM test_cache ORDER BY id;
+ id 
+----
+  1
+  3
+(2 rows)
+
+-- Cleanup
+RESET pgedge_safesession.roles;
+DROP TABLE test_cache;
+DROP ROLE safesession_cache_a;
+DROP ROLE safesession_cache_b;
+DROP EXTENSION pgedge_safesession;

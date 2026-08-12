@@ -7,7 +7,13 @@
 --
 -------------------------------------------------------------------------
 -- GUC toggle tests for pgEdge SafeSession
--- Verify each protection can be independently disabled
+--
+-- A restricted transaction is now forced read-only unconditionally, so
+-- disabling a block_* protection removes only SafeSession's own, more
+-- specific check; ordinary writes are still rejected by PostgreSQL's own
+-- read-only transaction checks. The wording of the error shows which
+-- layer caught the statement: "... in a read-only session" is
+-- SafeSession's own check, "... in a read-only transaction" is core's.
 -- Setup: clean any stale state
 RESET SESSION AUTHORIZATION;
 SET default_transaction_read_only = off;
@@ -23,170 +29,58 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON test_gucs
     TO safesession_guc_test;
 GRANT CREATE ON SCHEMA public TO safesession_guc_test;
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_guc_test';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_guc_test';
 -- ============================================================
--- Test 1: block_dml = off (with force_read_only = off)
--- allows DML
+-- All protections on: SafeSession's own checks fire
 -- ============================================================
-ALTER SYSTEM SET pgedge_safesession.block_dml = off;
-ALTER SYSTEM SET pgedge_safesession.force_read_only = off;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
 SET SESSION AUTHORIZATION safesession_guc_test;
-INSERT INTO test_gucs VALUES (3, 'dml_allowed');
-SELECT * FROM test_gucs ORDER BY id;
- id |     val     
-----+-------------
-  1 | hello
-  2 | world
-  3 | dml_allowed
-(3 rows)
-
-RESET SESSION AUTHORIZATION;
--- Re-enable and clean up
-ALTER SYSTEM SET pgedge_safesession.block_dml = on;
-ALTER SYSTEM SET pgedge_safesession.force_read_only = on;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
-DELETE FROM test_gucs WHERE id = 3;
--- Verify DML is blocked again
-SET SESSION AUTHORIZATION safesession_guc_test;
-INSERT INTO test_gucs VALUES (4, 'should_fail');
+INSERT INTO test_gucs VALUES (3, 'blocked');
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+CREATE TABLE test_gucs_temp (id int);
+ERROR:  cannot execute CREATE TABLE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 RESET SESSION AUTHORIZATION;
 -- ============================================================
--- Test 2: block_ddl = off (with force_read_only = off)
--- allows DDL
+-- Test 1: block_dml = off
+-- SafeSession's DML check is skipped, but the write is still
+-- rejected by the read-only transaction floor.
 -- ============================================================
-ALTER SYSTEM SET pgedge_safesession.block_ddl = off;
-ALTER SYSTEM SET pgedge_safesession.force_read_only = off;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.block_dml = off;
+SET SESSION AUTHORIZATION safesession_guc_test;
+INSERT INTO test_gucs VALUES (4, 'still_blocked');
+ERROR:  cannot execute INSERT in a read-only transaction
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.block_dml = on;
+-- ============================================================
+-- Test 2: block_ddl = off
+-- SafeSession's utility check is skipped, but ordinary DDL is
+-- still rejected by the read-only transaction floor.
+-- ============================================================
+SET pgedge_safesession.block_ddl = off;
 SET SESSION AUTHORIZATION safesession_guc_test;
 CREATE TABLE test_gucs_temp (id int);
-DROP TABLE test_gucs_temp;
+ERROR:  cannot execute CREATE TABLE in a read-only transaction
 RESET SESSION AUTHORIZATION;
--- Re-enable
-ALTER SYSTEM SET pgedge_safesession.block_ddl = on;
-ALTER SYSTEM SET pgedge_safesession.force_read_only = on;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
--- Verify DDL is blocked again
-SET SESSION AUTHORIZATION safesession_guc_test;
-CREATE TABLE test_gucs_temp2 (id int);
-ERROR:  cannot execute utility commands in a read-only session
-RESET SESSION AUTHORIZATION;
--- ============================================================
--- Test 3: force_read_only = off with block_dml = on
--- DML blocked by hook, not by XactReadOnly
--- ============================================================
--- Show default state (should be on)
-SHOW pgedge_safesession.force_read_only;
- pgedge_safesession.force_read_only 
-------------------------------------
- on
-(1 row)
-
-ALTER SYSTEM SET pgedge_safesession.force_read_only = off;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
--- DML should still be blocked by block_dml
-SET SESSION AUTHORIZATION safesession_guc_test;
-INSERT INTO test_gucs VALUES (5, 'still_blocked');
-ERROR:  cannot execute INSERT in a read-only session
-RESET SESSION AUTHORIZATION;
--- Re-enable
-ALTER SYSTEM SET pgedge_safesession.force_read_only = on;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
+SET pgedge_safesession.block_ddl = on;
+-- Nothing above should have modified the table
+SET default_transaction_read_only = off;
+SELECT * FROM test_gucs ORDER BY id;
+ id |  val  
+----+-------
+  1 | hello
+  2 | world
+(2 rows)
 
 -- ============================================================
 -- Cleanup
 -- ============================================================
 RESET SESSION AUTHORIZATION;
-ALTER SYSTEM RESET pgedge_safesession.roles;
-ALTER SYSTEM RESET pgedge_safesession.block_dml;
-ALTER SYSTEM RESET pgedge_safesession.block_ddl;
-ALTER SYSTEM RESET pgedge_safesession.block_c_functions;
-ALTER SYSTEM RESET pgedge_safesession.block_all_c_functions;
-ALTER SYSTEM RESET pgedge_safesession.force_read_only;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
+RESET pgedge_safesession.block_dml;
+RESET pgedge_safesession.block_ddl;
+RESET pgedge_safesession.block_c_functions;
+RESET pgedge_safesession.block_all_c_functions;
 REVOKE CREATE ON SCHEMA public FROM safesession_guc_test;
 DROP TABLE test_gucs;
 DROP ROLE safesession_guc_test;

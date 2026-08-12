@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # Run on every pull request regardless of its base branch, so that
+  # stacked pull requests (whose base is another feature branch, not
+  # main) are also tested.
   pull_request:
-    branches: [main]
 
 jobs:
   test:
@@ -24,12 +26,13 @@ jobs:
           sudo apt-get -y --purge remove postgresql libpq-dev \
               libpq5 postgresql-client-common postgresql-common
           sudo rm -rf /var/lib/postgresql
-          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt \
-              $(lsb_release -cs)-pgdg main" \
-              > /etc/apt/sources.list.d/pgdg.list'
           wget --quiet -O - \
               https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-              | sudo apt-key add -
+              | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] \
+              http://apt.postgresql.org/pub/repos/apt \
+              $(lsb_release -cs)-pgdg main" \
+              > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update
           sudo apt-get -y install \
               postgresql-${{ matrix.pg_version }} \
@@ -57,6 +60,66 @@ jobs:
           make installcheck \
               PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config \
               PGHOST=/var/run/postgresql
+
+      - name: Show regression diffs on failure
+        if: failure()
+        run: |
+          if [ -f regression.diffs ]; then
+              cat regression.diffs
+          fi
+
+  # A single assert-enabled build. The PGDG packages above are production
+  # builds with assertions compiled out, so PostgreSQL's own invariant
+  # checks never run against the extension there. This job builds one
+  # PostgreSQL from source with --enable-cassert so those assertions fire,
+  # which is how the aborted-transaction crash was originally caught.
+  assert:
+    runs-on: ubuntu-latest
+    name: PostgreSQL 18 (assert-enabled)
+    env:
+      PG_VERSION: "18.4"
+      PREFIX: ${{ github.workspace }}/pgassert
+      PGDATA: ${{ github.workspace }}/pgdata
+      PGHOST: /tmp/pgs
+      PGPORT: "5455"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential bison flex
+
+      - name: Build assert-enabled PostgreSQL
+        run: |
+          wget --quiet -O pg.tar.bz2 \
+              "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2"
+          tar xf pg.tar.bz2
+          cd postgresql-${PG_VERSION}
+          ./configure --prefix="$PREFIX" --enable-cassert --enable-debug \
+              --without-icu --without-readline --without-zlib
+          make -j"$(nproc)"
+          make install
+
+      - name: Build and install extension
+        run: |
+          make install PG_CONFIG="$PREFIX/bin/pg_config"
+
+      - name: Start assert-enabled cluster
+        run: |
+          mkdir -p "$PGHOST"
+          "$PREFIX/bin/initdb" -D "$PGDATA" --auth=trust --no-sync
+          {
+            echo "port = $PGPORT"
+            echo "unix_socket_directories = '$PGHOST'"
+            echo "listen_addresses = ''"
+            echo "shared_preload_libraries = 'pgedge_safesession'"
+          } >> "$PGDATA/postgresql.conf"
+          "$PREFIX/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/log" start
+          sleep 1
+
+      - name: Run tests
+        run: |
+          make installcheck PG_CONFIG="$PREFIX/bin/pg_config"
 
       - name: Show regression diffs on failure
         if: failure()

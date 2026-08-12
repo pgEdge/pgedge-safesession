@@ -27,9 +27,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON test_basic
     TO safesession_readonly;
 
 -- Configure the restricted role
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
-SELECT pg_sleep(0.5);
+SET pgedge_safesession.roles = 'safesession_readonly';
 
 -- Switch to restricted role (changes session user)
 SET SESSION AUTHORIZATION safesession_readonly;
@@ -65,15 +63,15 @@ RESET work_mem;
 -- Protected GUC SET should be blocked
 SET default_transaction_read_only = off;
 
--- RESET ALL should be blocked
+-- RESET ALL is allowed: enforcement is re-asserted per statement, so it
+-- cannot relax the restriction, and blocking it would break poolers
 RESET ALL;
 
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
+RESET pgedge_safesession.roles;
 DROP TABLE test_basic;
 DROP ROLE safesession_readonly;
 DROP EXTENSION pgedge_safesession;

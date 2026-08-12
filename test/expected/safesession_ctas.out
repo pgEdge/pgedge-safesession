@@ -26,27 +26,17 @@ INSERT INTO test_ctas_src VALUES (1, 'hello');
 GRANT SELECT ON test_ctas_src TO safesession_readonly;
 GRANT CREATE ON SCHEMA public TO safesession_readonly;
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_readonly';
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
 -- CREATE TABLE AS should be blocked
 CREATE TABLE test_ctas_dest AS SELECT * FROM test_ctas_src;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute CREATE TABLE AS in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- SELECT INTO should be blocked
 SELECT * INTO test_ctas_dest2 FROM test_ctas_src;
-ERROR:  cannot execute utility commands in a read-only session
+ERROR:  cannot execute SELECT INTO in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- Regular SELECT should work
 SELECT * FROM test_ctas_src ORDER BY id;
  id |  val  
@@ -57,13 +47,7 @@ SELECT * FROM test_ctas_src ORDER BY id;
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 REVOKE CREATE ON SCHEMA public FROM safesession_readonly;
 DROP TABLE test_ctas_src;
 DROP ROLE safesession_readonly;

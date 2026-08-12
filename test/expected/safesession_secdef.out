@@ -48,25 +48,14 @@ $$;
 GRANT EXECUTE ON FUNCTION secdef_read()
     TO safesession_readonly;
 -- Configure restriction
-ALTER SYSTEM SET pgedge_safesession.roles = 'safesession_readonly';
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
-SELECT pg_sleep(0.5);
- pg_sleep 
-----------
- 
-(1 row)
-
+SET pgedge_safesession.roles = 'safesession_readonly';
 -- Switch to restricted role
 SET SESSION AUTHORIZATION safesession_readonly;
 -- SECURITY DEFINER write function should be blocked
 -- (session user is still restricted)
 SELECT secdef_write();
 ERROR:  cannot execute INSERT in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CONTEXT:  SQL statement "INSERT INTO test_secdef VALUES (99, 'from_secdef')"
 PL/pgSQL function secdef_write() line 3 at SQL statement
 -- SECURITY DEFINER read function should work
@@ -86,13 +75,7 @@ SELECT * FROM test_secdef ORDER BY id;
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 -- Cleanup
-ALTER SYSTEM RESET pgedge_safesession.roles;
-SELECT pg_reload_conf();
- pg_reload_conf 
-----------------
- t
-(1 row)
-
+RESET pgedge_safesession.roles;
 DROP FUNCTION secdef_write();
 DROP FUNCTION secdef_read();
 DROP TABLE test_secdef;

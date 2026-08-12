@@ -119,62 +119,80 @@ regardless of volatility. This provides stricter
 protection at the cost of blocking read-only extension
 functions. Only applies when `block_c_functions` is on.
 
-### `pgedge_safesession.force_read_only`
-
-Default: `on`
-
-Sets `default_transaction_read_only = on` and
-`XactReadOnly = true` for restricted sessions as
-belt-and-suspenders protection. This ensures that even if
-something bypasses the hooks, PostgreSQL's own internal
-read-only checks will catch it.
-
 ## What is Blocked
 
 For restricted sessions (with all protections enabled),
 the following operations are blocked:
 
-- **DML**: INSERT, UPDATE, DELETE, MERGE (PostgreSQL 15+)
+- **DML**: INSERT, UPDATE, DELETE, MERGE (PostgreSQL 15+),
+  including data-modifying CTEs
+  (`WITH c AS (INSERT ... RETURNING ...) ...`)
 - **DDL**: CREATE, ALTER, DROP, TRUNCATE, and all other
   schema modification commands
 - **COPY FROM**: data import (COPY TO is allowed)
 - **COPY TO PROGRAM**: program execution via COPY
 - **CREATE TABLE AS / SELECT INTO**: table creation from
-  queries
+  queries, including their `EXPLAIN ANALYZE` forms
+- **EXPLAIN ANALYZE of a writing statement**: it executes
+  the statement, so it is treated as a write
 - **GRANT / REVOKE**: privilege modifications
 - **VACUUM / ANALYZE**: maintenance commands
-- **Volatile C-language functions**: functions implemented
-  in C that are marked VOLATILE (e.g., `dblink_exec`,
-  `lo_import`, `set_config`). IMMUTABLE/STABLE C functions
-  are allowed by default.
+- **CHECKPOINT**: forces heavy I/O and emits WAL
+- **Two-phase commit**: PREPARE TRANSACTION, COMMIT
+  PREPARED, ROLLBACK PREPARED
+- **Side-effecting functions**: volatile functions in
+  untrusted languages (C, internal, or an untrusted PL
+  such as `plpython3u`), plus a curated set of
+  side-effecting built-ins (`lo_import`, `pg_read_file`,
+  `set_config`, `pg_advisory_lock`, `nextval`, and others).
+  A `DO` block or `CALL` in an untrusted language is
+  blocked for the same reason. Arguments count as part of
+  the statement, so a blocked function is rejected whether
+  it is called directly, passed as a `CALL` argument, or
+  passed as an `EXECUTE` parameter (including through
+  `EXPLAIN EXECUTE` and `CREATE TABLE AS ... EXECUTE`).
 - **Exclusive locks**: LOCK TABLE with modes above
   ROW SHARE
-- **GUC tampering**: SET/RESET of
-  `default_transaction_read_only`, SET TRANSACTION
-  READ WRITE, and RESET ALL
+- **GUC tampering**: any attempt to relax
+  `transaction_read_only` or `default_transaction_read_only`,
+  whether by setting one of them to a false value, by
+  RESET or SET TO DEFAULT, or through SET TRANSACTION READ
+  WRITE and SET SESSION CHARACTERISTICS AS TRANSACTION READ
+  WRITE
 
 ## What is Allowed
 
 - **SELECT**: all read queries, including those using
   WHERE clauses, aggregates, and built-in functions
-- **EXPLAIN**: query plans (does not execute)
+- **EXPLAIN**: query plans. Plain EXPLAIN only plans and
+  is always allowed; EXPLAIN ANALYZE is allowed only when
+  the statement it runs does not write.
 - **Transaction control**: BEGIN, COMMIT, ROLLBACK,
   SAVEPOINT
 - **SET / RESET**: non-protected GUC changes
   (e.g., work_mem)
-- **SET TRANSACTION ISOLATION LEVEL**: isolation level
-  changes
+- **SET TRANSACTION**: ISOLATION LEVEL and READ ONLY
+  (tightening the transaction is allowed)
+- **Asserting read-only**: setting `transaction_read_only`
+  or `default_transaction_read_only` to on, which asks for
+  the state that is already enforced. Clients that assert
+  read-only on every connection they open, such as a
+  connection pool with writes disabled, therefore work
+  against restricted roles.
 - **SHOW**: display settings
 - **LISTEN / NOTIFY**: notification channels
 - **Cursors**: DECLARE, FETCH, CLOSE
-- **DO blocks**: anonymous code blocks (inner writes are
-  caught by the executor hook)
+- **Connection-pooler resets**: DISCARD ALL, DISCARD
+  PLANS, and RESET ALL (they cannot relax the restriction,
+  which is re-asserted per statement)
+- **DO blocks and CALL**: in a trusted language (PL/pgSQL,
+  SQL, ...); any write inside is caught by the executor
+  hook
 - **PL/pgSQL and SQL functions**: read-only functions
   execute normally; any write attempt inside a function
   is caught by the executor hook
-- **IMMUTABLE/STABLE C functions**: extension functions
-  that promise no side effects (e.g., PostGIS spatial
-  calculations, pgvector distance operators)
+- **IMMUTABLE/STABLE functions**, and harmless volatile
+  built-ins such as `random()` and `clock_timestamp()`
 
 ## Security Model
 
@@ -205,17 +223,77 @@ function owned by a privileged user to perform writes.
 
 If role `app_reader` is listed in
 `pgedge_safesession.roles`, then any role that is a member
-of `app_reader` is also restricted. This uses PostgreSQL's
-`is_member_of_role()` function for membership checking.
+of `app_reader` is also restricted. Membership is tested
+with PostgreSQL's `is_member_of_role_nosuper()`, so it
+follows actual grants only.
+
+The distinction matters because PostgreSQL otherwise reports
+a superuser as a member of every role in the database, with
+no grant behind it, which is the right answer for a
+privilege test and the wrong one here. Any mechanism that
+briefly makes the current user a superuser whilst the
+session user is not, such as a SECURITY DEFINER function
+owned by a superuser or an extension like supautils
+elevating a privileged role for a single command, would
+otherwise appear to be acting as a member of every
+restricted role and be blocked. Enforcement still anchors on
+the session user, so such elevation is not a way out of the
+restriction either: a restricted session stays restricted
+inside a superuser-owned SECURITY DEFINER function.
+
+### Restriction Changes and Cached Plans
+
+Side-effecting function calls are detected when a statement
+or expression is parsed, rather than when it is executed, so
+a plan cached before a session became restricted would
+otherwise be replayed without the check running again. That
+matters because a session can become restricted part-way
+through its life: the roles list can be edited and the
+configuration reloaded, or a role can be granted membership
+of a listed role, whilst sessions are open.
+
+Becoming restricted is therefore treated as an invalidation
+event, and the session's cached plans are discarded exactly
+as `DISCARD PLANS` does, so that everything is re-analysed
+under the new state. This covers prepared statements and the
+plans PL/pgSQL caches for its expressions alike. Plans built
+whilst a session was restricted are left alone when the
+restriction is lifted, since they have already been checked.
 
 ### Belt-and-Suspenders
 
-When `force_read_only` is enabled (the default),
-SafeSession sets `default_transaction_read_only = on` for
-restricted sessions. This provides an additional layer of
-protection: even if a C function somehow bypasses the
-hooks and attempts direct heap writes, PostgreSQL's own
-internal read-only checks will catch it.
+For every restricted session SafeSession also forces the
+current transaction read-only (`XactReadOnly`), re-asserted
+on each statement. This provides an additional layer of
+protection that cannot be turned off: even if something
+bypasses the hooks and attempts direct heap writes,
+PostgreSQL's own internal read-only checks will catch it.
+The setting is applied without writing any session-level
+GUC, so it leaves no state behind and does not interfere
+with connection poolers.
+
+## Known Limitations
+
+- The list of side-effecting built-in functions is curated
+  and deliberately conservative rather than exhaustive.
+  Most such functions are superuser-only in any case; the
+  notable exceptions, the advisory-lock and sequence
+  functions, are on the list. A volatile function in a
+  trusted language is allowed to run, and any write it
+  performs is caught at execution instead.
+- Enforcement anchors on the session user. A superuser can
+  still use `SET SESSION AUTHORIZATION` to become a
+  restricted role (that is how the restriction is entered);
+  this is by design and is not a bypass.
+- The roles list must be set from the server configuration
+  (`shared_preload_libraries` is required, and the roles
+  are normally set in `postgresql.conf` or with
+  `ALTER SYSTEM`). Setting it only for a single session
+  with `SET` would be undone by that session's `DISCARD
+  ALL` or `RESET ALL`.
+- SafeSession and Spock both install executor and utility
+  hooks. They chain correctly, but if both are deployed the
+  interaction has not been exhaustively tested.
 
 ## Example
 

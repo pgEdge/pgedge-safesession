@@ -19,8 +19,6 @@ and this project adheres to
       blocking (default: on)
     - `block_all_c_functions`: block all C functions
       regardless of volatility (default: off)
-    - `force_read_only`: toggle belt-and-suspenders
-      XactReadOnly enforcement (default: off)
 
 - COPY TO PROGRAM blocking for restricted sessions
 - SET TRANSACTION READ WRITE blocking for restricted
@@ -47,6 +45,41 @@ and this project adheres to
 - COPY TO PROGRAM was not explicitly blocked (mitigated by
   PostgreSQL privilege requirements, but added for
   defense-in-depth)
+- Restricted sessions rejected SET of `transaction_read_only`
+  or `default_transaction_read_only` to on, which asks for
+  the state SafeSession already enforces. A client that
+  asserts read-only on each connection it opens, such as a
+  connection pool running with writes disabled, was locked
+  out entirely. Only relaxing either setting is blocked now.
+- A restricted session could run any blocked function by
+  passing it as a parameter to `EXECUTE`, because the
+  parameters of a prepared statement are neither part of the
+  prepared query nor evaluated through the executor, so
+  neither of the checks that would catch them ever saw them.
+  The same evaluation happens for `EXPLAIN EXECUTE`, with or
+  without `ANALYZE`, and for `CREATE TABLE AS ... EXECUTE`,
+  and all three are now checked.
+- Role membership was tested with `is_member_of_role()`,
+  which reports a superuser as a member of every role in the
+  database with no grant behind it. Any role that briefly
+  acts as a superuser whilst its session user does not, such
+  as one inside a SECURITY DEFINER function owned by a
+  superuser or one elevated for a single command by an
+  extension like supautils, was therefore treated as a
+  member of every restricted role and blocked, even when it
+  was listed nowhere and granted nothing. Membership now
+  uses `is_member_of_role_nosuper()` and follows actual
+  grants only.
+- Side-effecting function calls are detected when a statement
+  is parsed, so a plan cached before a session became
+  restricted was replayed without the check running again. A
+  session that became restricted part-way through its life,
+  because the roles list was reloaded or because a role was
+  granted membership of a listed role, could therefore go on
+  calling blocked functions through any prepared statement or
+  PL/pgSQL expression it had already executed. Becoming
+  restricted now discards the session's cached plans, so they
+  are re-analysed under the new state.
 
 ## [1.0-alpha1] - Unreleased
 
