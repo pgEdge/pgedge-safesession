@@ -9,6 +9,13 @@
  */
 #include "postgres.h"
 
+/*
+ * GETSTRUCT lives in access/htup_details.h, which this file used to reach
+ * transitively through the other PostgreSQL headers below. PostgreSQL 19
+ * dropped it from that include chain, so include it explicitly; on
+ * PostgreSQL 14-18 the header is already in the chain and this is a no-op.
+ */
+#include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/pg_aggregate.h"
@@ -727,10 +734,17 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * restricted session must not run. Working from the analysed Query
  * rather than the plan lets us examine every function the statement
  * references, wherever it ends up in the plan tree.
+ *
+ * The jstate parameter arrived in PostgreSQL 14, and PostgreSQL 19 made it
+ * const in post_parse_analyze_hook_type, so each of the three signatures has
+ * to be spelled out here: keeping the older one would make the assignment to
+ * the hook an incompatible function pointer assignment.
  */
 static void
 safesession_post_parse_analyze(ParseState *pstate, Query *query
-#if PG_VERSION_NUM >= 140000
+#if PG_VERSION_NUM >= 190000
+                               , const JumbleState *jstate
+#elif PG_VERSION_NUM >= 140000
                                , JumbleState *jstate
 #endif
                                )
