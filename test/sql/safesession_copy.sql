@@ -32,8 +32,11 @@ SET SESSION AUTHORIZATION safesession_readonly;
 -- COPY TO (stdout) should be allowed
 COPY test_copy TO STDOUT;
 
--- COPY FROM should be blocked
-COPY test_copy FROM STDIN;
+-- COPY FROM should be blocked. A file is named rather than STDIN so the
+-- test does not depend on how psql treats the input stream after a
+-- rejected COPY; the path is never opened, because the check runs in the
+-- utility hook before COPY begins.
+COPY test_copy FROM '/nonexistent/safesession';
 
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
