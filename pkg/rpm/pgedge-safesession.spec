@@ -80,5 +80,5 @@ install -p -m 0644 %{_builddir}/%{pname}-%{version}/%{pname}-sbom.json.asc %{bui
 %endif
 
 %changelog
-* Wed Aug 12 2026 Muhammad Aqeel <muhammad.aqeel@pgedge.com> - 1.0
+* Wed Aug 12 2026 pgEdge Build Team <support@pgedge.com> - 1.0
 - Initial pgEdge SafeSession package.
