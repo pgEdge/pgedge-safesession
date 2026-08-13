@@ -470,45 +470,49 @@ rebuild_role_cache(void)
     char     *rawstring;
     List     *rolelist;
     ListCell *lc;
+    List     *newoids = NIL;
 
     /* We are about to read the catalog; a transaction must be active. */
     Assert(IsTransactionState());
 
-    if (cached_role_oids != NIL)
-    {
-        list_free(cached_role_oids);
-        cached_role_oids = NIL;
-    }
+    /*
+     * Mark the cache valid before resolving anything, so that an
+     * invalidation arriving while we work is not lost. The list is built to
+     * one side and installed only once it is complete, so an error part of
+     * the way through leaves the previous list in place rather than a
+     * half-built one that would silently under-restrict.
+     */
     role_cache_valid = true;
 
-    if (safesession_roles == NULL || safesession_roles[0] == '\0')
-        return;
-
-    rawstring = pstrdup(safesession_roles);
-    if (!SplitIdentifierString(rawstring, ',', &rolelist))
+    if (safesession_roles != NULL && safesession_roles[0] != '\0')
     {
+        rawstring = pstrdup(safesession_roles);
+
         /* Malformed; the check hook rejects this, so treat as empty. */
+        if (SplitIdentifierString(rawstring, ',', &rolelist))
+        {
+            foreach(lc, rolelist)
+            {
+                char *rolename = (char *) lfirst(lc);
+                Oid   roleid = get_role_oid(rolename, true);
+
+                if (OidIsValid(roleid))
+                {
+                    MemoryContext old;
+
+                    old = MemoryContextSwitchTo(CacheMemoryContext);
+                    newoids = lappend_oid(newoids, roleid);
+                    MemoryContextSwitchTo(old);
+                }
+            }
+        }
+
         pfree(rawstring);
         list_free(rolelist);
-        return;
     }
 
-    foreach(lc, rolelist)
-    {
-        char *rolename = (char *) lfirst(lc);
-        Oid   roleid = get_role_oid(rolename, true);
-
-        if (OidIsValid(roleid))
-        {
-            MemoryContext old = MemoryContextSwitchTo(CacheMemoryContext);
-
-            cached_role_oids = lappend_oid(cached_role_oids, roleid);
-            MemoryContextSwitchTo(old);
-        }
-    }
-
-    pfree(rawstring);
-    list_free(rolelist);
+    list_free(cached_role_oids);
+    cached_role_oids = newoids;
 }
 
 /*
