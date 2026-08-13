@@ -9,6 +9,10 @@
 *.a
 *.pc
 
+# Packaging (staged source tarballs and container build output)
+/release-artifacts/
+/output/
+
 # macOS
 .DS_Store
 
