@@ -48,6 +48,13 @@ and this project adheres to
 
 ### Fixed
 
+- `pg_current_xact_id()` and `txid_current()` were allowed
+  for restricted sessions. Both force the transaction to
+  take a real transaction ID, which a read-only transaction
+  permits, so a restricted session could consume transaction
+  IDs and add wraparound pressure. The `_if_assigned()`
+  variants only report an ID already handed out and remain
+  allowed.
 - `brin_summarize_new_values()`, `brin_summarize_range()`,
   `brin_desummarize_range()` and `gin_clean_pending_list()`
   were allowed for restricted sessions. They modify index
