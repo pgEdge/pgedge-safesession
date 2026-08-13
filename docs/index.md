@@ -144,7 +144,8 @@ the following operations are blocked:
   untrusted languages (C, internal, or an untrusted PL
   such as `plpython3u`), plus a curated set of
   side-effecting built-ins (`lo_import`, `pg_read_file`,
-  `set_config`, `pg_advisory_lock`, `nextval`, and others).
+  `set_config`, `pg_advisory_lock`, `nextval`, the BRIN and
+  GIN index maintenance functions, and others).
   A `DO` block or `CALL` in an untrusted language is
   blocked for the same reason. Arguments count as part of
   the statement, so a blocked function is rejected whether

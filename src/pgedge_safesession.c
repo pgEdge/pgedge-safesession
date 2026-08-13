@@ -75,6 +75,10 @@ void _PG_init(void);
  * executable by ordinary roles).
  */
 static const char *const dangerous_builtins[] = {
+    "brin_desummarize_range",
+    "brin_summarize_new_values",
+    "brin_summarize_range",
+    "gin_clean_pending_list",
     "lo_export",
     "lo_import",
     "nextval",
