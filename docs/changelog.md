@@ -80,6 +80,11 @@ and this project adheres to
   PL/pgSQL expression it had already executed. Becoming
   restricted now discards the session's cached plans, so they
   are re-analysed under the new state.
+- PostgreSQL 19 no longer compiled, because it reaches
+  `GETSTRUCT` through a different header than earlier releases
+  and it made the `jstate` argument of
+  `post_parse_analyze_hook_type` const. Builds on
+  PostgreSQL 14 to 18 are unchanged.
 
 ## [1.0-alpha1] - Unreleased
 
