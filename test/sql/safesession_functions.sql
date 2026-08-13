@@ -82,6 +82,18 @@ SELECT func_sql_read();
 -- Write SQL function should be blocked
 SELECT func_sql_write();
 
+-- A denylisted built-in that PostgreSQL itself permits in a read-only
+-- transaction is still blocked: pg_export_snapshot() writes a file into
+-- pg_snapshots for every call, so the read-only floor alone does not stop
+-- a restricted session from consuming disk space with it.
+SELECT pg_export_snapshot();
+
+-- ... and equally so inside an explicit transaction block, which is the
+-- only place the function is of any use
+BEGIN;
+SELECT pg_export_snapshot();
+ROLLBACK;
+
 -- Switch back to superuser for cleanup
 RESET SESSION AUTHORIZATION;
 
