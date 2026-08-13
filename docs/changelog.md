@@ -39,6 +39,12 @@ and this project adheres to
 
 ### Fixed
 
+- Cached plans were not discarded when a role was granted
+  membership of a listed role. `GRANT <role> TO <role>`
+  writes `pg_auth_members`, not `pg_authid`, so it missed
+  the callback that resets the plan cache, and a plan built
+  before the grant could run once more without the
+  blocked-function check.
 - SET TRANSACTION READ WRITE was silently accepted by
   restricted sessions (policy gap, not exploitable due to
   belt-and-suspenders protection)

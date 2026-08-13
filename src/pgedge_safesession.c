@@ -1511,8 +1511,14 @@ _PG_init(void)
      * Invalidate the cached role-OID list when pg_authid changes (a role
      * created, dropped or renamed). GUC changes are handled by the assign
      * hook.
+     *
+     * A membership grant writes pg_auth_members rather than pg_authid, so
+     * AUTHMEMROLEMEM is registered too. Either of the two pg_auth_members
+     * caches will do, as both are invalidated by the same tuple change.
      */
     CacheRegisterSyscacheCallback(AUTHOID, invalidate_role_cache,
+                                  (Datum) 0);
+    CacheRegisterSyscacheCallback(AUTHMEMROLEMEM, invalidate_role_cache,
                                   (Datum) 0);
 
 #if PG_VERSION_NUM >= 150000
