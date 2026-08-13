@@ -95,6 +95,7 @@ static const char *const dangerous_builtins[] = {
     "pg_create_logical_replication_slot",
     "pg_create_physical_replication_slot",
     "pg_create_restore_point",
+    "pg_current_xact_id",
     "pg_drop_replication_slot",
     "pg_logical_emit_message",
     "pg_ls_dir",
@@ -115,6 +116,7 @@ static const char *const dangerous_builtins[] = {
     "pg_try_advisory_xact_lock_shared",
     "set_config",
     "setval",
+    "txid_current",
 };
 
 static bool
