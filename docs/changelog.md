@@ -39,6 +39,13 @@ and this project adheres to
 
 ### Fixed
 
+- `brin_summarize_new_values()`, `brin_summarize_range()`,
+  `brin_desummarize_range()` and `gin_clean_pending_list()`
+  were allowed for restricted sessions. They modify index
+  pages and emit WAL without going through the executor or
+  any of core's read-only checks, and the table owner may
+  call them, so a restricted role could write to indexes on
+  tables it owns. All four are now blocked.
 - Cached plans were not discarded when a role was granted
   membership of a listed role. `GRANT <role> TO <role>`
   writes `pg_auth_members`, not `pg_authid`, so it missed
