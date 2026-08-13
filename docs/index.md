@@ -206,7 +206,9 @@ the following operations are blocked:
   hook
 - **PL/pgSQL and SQL functions**: read-only functions
   execute normally; any write attempt inside a function
-  is caught by the executor hook
+  is caught by the executor hook, and a blocked function
+  called from a SQL function body is rejected before the
+  call runs
 - **IMMUTABLE/STABLE functions**, and harmless volatile
   built-ins such as `random()` and `clock_timestamp()`
 

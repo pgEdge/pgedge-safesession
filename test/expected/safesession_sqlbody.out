@@ -1,0 +1,110 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- SQL function body tests for pgEdge SafeSession
+--
+-- A SQL function is written in a trusted language, so the language test
+-- alone lets it through on the grounds that its body is caught downstream.
+-- That holds for writes, which reach the executor, but not for the
+-- denylisted built-ins, which exist on the list precisely because they
+-- escape it. The body is not always re-analysed at call time either: the
+-- planner inlines a simple SQL function rather than running it through
+-- functions.c. Both spellings of the body have to be looked into.
+--
+-- set_config() is the marker throughout, because it escapes the read-only
+-- floor; SHOW work_mem shows whether a call took effect.
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP ROLE IF EXISTS safesession_sqlbody;
+NOTICE:  role "safesession_sqlbody" does not exist, skipping
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+CREATE ROLE safesession_sqlbody LOGIN;
+-- Old-style text body, and the standard BEGIN ATOMIC body
+CREATE FUNCTION sb_text() RETURNS text LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '61MB', false) $$;
+CREATE FUNCTION sb_atomic() RETURNS text LANGUAGE sql
+    BEGIN ATOMIC;
+        SELECT set_config('work_mem', '62MB', false);
+    END;
+-- One SQL function wrapping another
+CREATE FUNCTION sb_nested() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_text() $$;
+-- A harmless read-only body, which must keep working
+CREATE FUNCTION sb_read() RETURNS bigint LANGUAGE sql
+    AS $$ SELECT count(*) FROM pg_class $$;
+-- A recursive body, to show the recursion guard terminates
+CREATE FUNCTION sb_recursive(int) RETURNS int LANGUAGE sql
+    AS $$ SELECT CASE WHEN $1 <= 0 THEN 0
+                      ELSE sb_recursive($1 - 1) END $$;
+GRANT EXECUTE ON FUNCTION sb_text(), sb_atomic(), sb_nested(), sb_read(),
+    sb_recursive(int) TO safesession_sqlbody;
+SET pgedge_safesession.roles = 'safesession_sqlbody';
+SET SESSION AUTHORIZATION safesession_sqlbody;
+SET work_mem = '4MB';
+-- Both spellings must be rejected, and through one level of nesting
+SELECT sb_text();
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+SELECT sb_atomic();
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+SELECT sb_nested();
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+-- A read-only SQL function is unaffected
+SELECT sb_read() > 0 AS read_only_body_still_works;
+ read_only_body_still_works 
+----------------------------
+ t
+(1 row)
+
+-- The recursion guard bounds the walk rather than looping
+SELECT sb_recursive(3) AS recursive_body_terminates;
+ recursive_body_terminates 
+---------------------------
+                         0
+(1 row)
+
+RESET SESSION AUTHORIZATION;
+-- With block_c_functions off the body check is skipped too, as everywhere
+-- else
+SET pgedge_safesession.block_c_functions = off;
+SET SESSION AUTHORIZATION safesession_sqlbody;
+SELECT sb_text();
+ sb_text 
+---------
+ 61MB
+(1 row)
+
+SHOW work_mem;
+ work_mem 
+----------
+ 61MB
+(1 row)
+
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.block_c_functions = on;
+-- Cleanup
+SET default_transaction_read_only = off;
+RESET pgedge_safesession.roles;
+RESET pgedge_safesession.block_c_functions;
+RESET work_mem;
+DROP FUNCTION sb_text();
+DROP FUNCTION sb_atomic();
+DROP FUNCTION sb_nested();
+DROP FUNCTION sb_read();
+DROP FUNCTION sb_recursive(int);
+DROP ROLE safesession_sqlbody;
+DROP EXTENSION pgedge_safesession;

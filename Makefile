@@ -14,6 +14,7 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_rolescheck safesession_procedural \
           safesession_rolecache safesession_status \
           safesession_indexmaint safesession_xid \
+          safesession_sqlbody \
           safesession_elevated safesession_plancache \
           safesession_coverage \
           safesession_views safesession_rls safesession_domains \

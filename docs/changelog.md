@@ -48,6 +48,14 @@ and this project adheres to
 
 ### Fixed
 
+- A blocked function called from the body of a SQL-language
+  function was not detected. `sql` is a trusted language, so
+  the body was assumed to be caught downstream, which holds
+  for writes but not for the denylisted built-ins, and the
+  planner inlines a simple SQL function rather than
+  re-analysing its body at call time. Both the old-style
+  text body and a standard `BEGIN ATOMIC` body are now
+  inspected. Read-only SQL functions are unaffected.
 - `pg_current_xact_id()` and `txid_current()` were allowed
   for restricted sessions. Both force the transaction to
   take a real transaction ID, which a read-only transaction

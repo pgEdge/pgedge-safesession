@@ -33,6 +33,7 @@
 #endif
 #include "commands/prepare.h"
 #include "executor/executor.h"
+#include "executor/functions.h"
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -44,6 +45,7 @@
 #include "parser/parse_expr.h"
 #include "parser/parse_node.h"
 #include "tcop/cmdtag.h"
+#include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
@@ -334,6 +336,102 @@ aggregate_support_is_blocked(Oid aggfnoid)
  * The signature matches check_function_callback so this can be handed to
  * check_functions_in_node().
  */
+/*
+ * Does the body of a SQL-language function call something a restricted
+ * session must not run?
+ *
+ * A SQL function passes the language test below, on the grounds that its
+ * body is caught downstream. That holds for writes, which reach the
+ * executor, but not for the denylisted built-ins, whose whole point is that
+ * they escape it. Nor is the body always re-analysed on the way through:
+ * the planner inlines a simple SQL function instead of running it through
+ * functions.c, and inlining happens after this check. So look inside.
+ */
+static bool
+sql_function_body_is_blocked(Oid funcid)
+{
+    static int depth = 0;
+    HeapTuple  proctup;
+    Datum      tmp;
+    bool       isnull;
+    bool       result = false;
+
+    /* Bound the recursion, for a recursive or mutually recursive body */
+    if (depth >= 5)
+        return false;
+
+    proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+    if (!HeapTupleIsValid(proctup))
+        return false;
+
+    depth++;
+    PG_TRY();
+    {
+        tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosqlbody,
+                              &isnull);
+        if (!isnull)
+        {
+            /* A standard-body (BEGIN ATOMIC) function is stored analysed */
+            Node *body = (Node *) stringToNode(TextDatumGetCString(tmp));
+
+            result = query_has_blocked_function_walker(body, NULL);
+        }
+        else
+        {
+            /*
+             * An old-style body is plain text. Analyse it the way
+             * functions.c would, which also runs this hook again on each
+             * inner statement.
+             */
+            SQLFunctionParseInfoPtr pinfo;
+            char       *prosrc;
+            ListCell   *lc;
+
+            tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosrc,
+                                  &isnull);
+            if (isnull)
+                elog(ERROR, "null prosrc for function %u", funcid);
+            prosrc = TextDatumGetCString(tmp);
+            pinfo = prepare_sql_fn_parse_info(proctup, NULL, InvalidOid);
+
+            foreach(lc, pg_parse_query(prosrc))
+            {
+                List     *querytrees;
+                ListCell *lc2;
+
+#if PG_VERSION_NUM >= 150000
+                querytrees = pg_analyze_and_rewrite_withcb(
+                    lfirst_node(RawStmt, lc), prosrc,
+                    (ParserSetupHook) sql_fn_parser_setup, pinfo, NULL);
+#else
+                querytrees = pg_analyze_and_rewrite_params(
+                    lfirst_node(RawStmt, lc), prosrc,
+                    (ParserSetupHook) sql_fn_parser_setup, pinfo, NULL);
+#endif
+                foreach(lc2, querytrees)
+                {
+                    if (query_has_blocked_function_walker(
+                            (Node *) lfirst(lc2), NULL))
+                    {
+                        result = true;
+                        break;
+                    }
+                }
+                if (result)
+                    break;
+            }
+        }
+    }
+    PG_FINALLY();
+    {
+        depth--;
+        ReleaseSysCache(proctup);
+    }
+    PG_END_TRY();
+
+    return result;
+}
+
 static bool
 function_is_blocked(Oid funcid, void *context)
 {
@@ -373,6 +471,11 @@ function_is_blocked(Oid funcid, void *context)
      */
     if (!result && prokind == PROKIND_AGGREGATE)
         result = aggregate_support_is_blocked(funcid);
+
+    /* A SQL function is judged by its body as well as by its language */
+    if (!result && !is_builtin && prolang == SQLlanguageId &&
+        prokind == PROKIND_FUNCTION)
+        result = sql_function_body_is_blocked(funcid);
 
     return result;
 }
