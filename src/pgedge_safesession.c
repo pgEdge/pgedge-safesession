@@ -61,70 +61,90 @@ static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 void _PG_init(void);
 
 /*
- * A curated list of side-effecting built-in (pg_catalog) functions.
+ * Built-in (pg_catalog) VOLATILE functions confirmed to have no
+ * observable side effect: no write (sequences, large objects), no
+ * filesystem access, no configuration change, no signalling another
+ * backend, no replication action, no cross-session lock.
  *
- * These are language-internal, so they are not caught by the
- * volatile-user-function rule in function_is_blocked(), but a restricted
- * session must not be able to call them: they write (sequences, large
- * objects), read from the filesystem, change configuration, signal other
- * backends, drive replication or take cross-session locks. The list is
- * matched by name against built-in functions only. It is deliberately
- * conservative rather than exhaustive; most of these are also
- * superuser-gated by default, so this is largely defence in depth (the
- * exceptions, such as the advisory-lock and sequence functions, are
- * executable by ordinary roles).
+ * A built-in function's language is always internal, so it is never
+ * caught by the volatile-user-function rule in function_is_blocked();
+ * built-ins are volatility-gated separately, and a VOLATILE one is
+ * blocked unless its name is on this list. The list is therefore an
+ * allow-list, not a denylist: it only needs to name the built-ins
+ * verified safe, not every dangerous one, so a new PostgreSQL release
+ * that adds a VOLATILE built-in is blocked by default rather than
+ * silently let through.
  */
-static const char *const dangerous_builtins[] = {
-    "brin_desummarize_range",
-    "brin_summarize_new_values",
-    "brin_summarize_range",
-    "gin_clean_pending_list",
-    "lo_export",
-    "lo_import",
-    "nextval",
-    "pg_advisory_lock",
-    "pg_advisory_lock_shared",
-    "pg_advisory_unlock",
-    "pg_advisory_unlock_all",
-    "pg_advisory_unlock_shared",
-    "pg_advisory_xact_lock",
-    "pg_advisory_xact_lock_shared",
-    "pg_backup_start",
-    "pg_backup_stop",
-    "pg_cancel_backend",
-    "pg_create_logical_replication_slot",
-    "pg_create_physical_replication_slot",
-    "pg_create_restore_point",
-    "pg_drop_replication_slot",
-    "pg_logical_emit_message",
-    "pg_ls_dir",
-    "pg_promote",
-    "pg_read_binary_file",
-    "pg_read_file",
-    "pg_reload_conf",
-    "pg_replication_origin_advance",
-    "pg_replication_origin_session_setup",
-    "pg_stat_file",
-    "pg_stat_reset",
-    "pg_stat_reset_shared",
-    "pg_switch_wal",
-    "pg_terminate_backend",
-    "pg_try_advisory_lock",
-    "pg_try_advisory_lock_shared",
-    "pg_try_advisory_xact_lock",
-    "pg_try_advisory_xact_lock_shared",
-    "set_config",
-    "setval",
+static const char *const safe_volatile_builtins[] = {
+    "array_sample",
+    "array_shuffle",
+    "clock_timestamp",
+    "current_query",
+    "currval",
+    "cursor_to_xml",
+    "cursor_to_xmlschema",
+    "gen_random_uuid",
+    "lastval",
+    "pg_collation_actual_version",
+    "pg_current_wal_flush_lsn",
+    "pg_current_wal_insert_lsn",
+    "pg_current_wal_lsn",
+    "pg_database_collation_actual_version",
+    "pg_database_size",
+    "pg_get_loaded_modules",
+    "pg_get_wait_events",
+    "pg_get_wal_replay_pause_state",
+    "pg_get_wal_resource_managers",
+    "pg_indexes_size",
+    "pg_is_in_recovery",
+    "pg_is_wal_replay_paused",
+    "pg_jit_available",
+    "pg_last_committed_xact",
+    "pg_last_wal_receive_lsn",
+    "pg_last_wal_replay_lsn",
+    "pg_last_xact_replay_timestamp",
+    "pg_notification_queue_usage",
+    "pg_partition_ancestors",
+    "pg_partition_tree",
+    "pg_relation_size",
+    "pg_stat_get_io",
+    "pg_stat_get_recovery_prefetch",
+    "pg_stat_get_xact_blocks_fetched",
+    "pg_stat_get_xact_blocks_hit",
+    "pg_stat_get_xact_function_calls",
+    "pg_stat_get_xact_function_self_time",
+    "pg_stat_get_xact_function_total_time",
+    "pg_stat_get_xact_numscans",
+    "pg_stat_get_xact_tuples_deleted",
+    "pg_stat_get_xact_tuples_fetched",
+    "pg_stat_get_xact_tuples_hot_updated",
+    "pg_stat_get_xact_tuples_inserted",
+    "pg_stat_get_xact_tuples_newpage_updated",
+    "pg_stat_get_xact_tuples_returned",
+    "pg_stat_get_xact_tuples_updated",
+    "pg_table_size",
+    "pg_tablespace_size",
+    "pg_total_relation_size",
+    "pg_xact_commit_timestamp",
+    "pg_xact_commit_timestamp_origin",
+    "pg_xact_status",
+    "random",
+    "random_normal",
+    "setseed",
+    "timeofday",
+    "txid_status",
+    "uuidv4",
+    "uuidv7",
 };
 
 static bool
-name_is_dangerous_builtin(const char *proname)
+name_is_safe_volatile_builtin(const char *proname)
 {
     int i;
 
-    for (i = 0; i < lengthof(dangerous_builtins); i++)
+    for (i = 0; i < lengthof(safe_volatile_builtins); i++)
     {
-        if (strcmp(proname, dangerous_builtins[i]) == 0)
+        if (strcmp(proname, safe_volatile_builtins[i]) == 0)
             return true;
     }
     return false;
@@ -272,13 +292,17 @@ aggregate_support_is_blocked(Oid aggfnoid)
  *     otherwise observe. STABLE and IMMUTABLE functions, and functions in
  *     trusted languages (SQL, PL/pgSQL, ...) whose writes are caught
  *     downstream, are allowed; or
- *   - one of a curated set of side-effecting built-ins (see
- *     dangerous_builtins), which are language-internal and so would not
- *     be flagged by the rule above.
+ *   - a built-in (OID < FirstNormalObjectId) that is marked VOLATILE and
+ *     is not on the safe_volatile_builtins allow-list. Built-ins are
+ *     always language-internal, so they are never caught by the rule
+ *     above; unlike user functions, an unrecognised VOLATILE built-in is
+ *     blocked by default rather than allowed by default, because the set
+ *     of built-ins is version-dependent and grows with every PostgreSQL
+ *     release.
  *
  * Harmless volatile built-ins such as random() and clock_timestamp() are
- * deliberately allowed. Separately, when block_all_c_functions is set,
- * every C-language function is blocked regardless of volatility.
+ * deliberately allow-listed. Separately, when block_all_c_functions is
+ * set, every C-language function is blocked regardless of volatility.
  *
  * The signature matches check_function_callback so this can be handed to
  * check_functions_in_node().
@@ -310,7 +334,8 @@ function_is_blocked(Oid funcid, void *context)
     if (safesession_block_all_c_functions && prolang == ClanguageId)
         result = true;
     else if (is_builtin)
-        result = name_is_dangerous_builtin(NameStr(proname));
+        result = (provolatile == PROVOLATILE_VOLATILE) &&
+                 !name_is_safe_volatile_builtin(NameStr(proname));
     else
         result = (provolatile == PROVOLATILE_VOLATILE) &&
                  !language_is_trusted(prolang);

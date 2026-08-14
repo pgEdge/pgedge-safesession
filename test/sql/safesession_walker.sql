@@ -77,11 +77,15 @@ WITH c AS (SELECT nextval('walk_seq') AS n) SELECT n FROM c;
 -- Other denylisted built-ins
 SELECT pg_advisory_lock(42);
 SELECT set_config('work_mem', '5MB', false);
+-- A volatile built-in that had no denylist entry before this
+-- change (only lo_import/lo_export were listed, not the rest of
+-- the large-object function family) must now be blocked too.
+SELECT lo_creat(-1);
 
 -- These must all be allowed:
 SELECT walk_vol(1);                 -- volatile, trusted language
 SELECT walk_imm(1);                 -- immutable
-SELECT random() < 2 AS ok;          -- volatile built-in, not denylisted
+SELECT random() < 2 AS ok;          -- volatile built-in, on the safe list
 SELECT count(*) FROM test_walk;     -- built-in aggregate
 SELECT id FROM test_walk WHERE id = 2 ORDER BY id;
 

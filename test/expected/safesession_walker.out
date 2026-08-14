@@ -92,6 +92,12 @@ HINT:  This session is restricted to read-only access by the pgedge_safesession 
 SELECT set_config('work_mem', '5MB', false);
 ERROR:  cannot execute functions that may have side effects in a read-only session
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+-- A volatile built-in that had no denylist entry before this
+-- change (only lo_import/lo_export were listed, not the rest of
+-- the large-object function family) must now be blocked too.
+SELECT lo_creat(-1);
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 -- These must all be allowed:
 SELECT walk_vol(1);                 -- volatile, trusted language
  walk_vol 
@@ -105,7 +111,7 @@ SELECT walk_imm(1);                 -- immutable
         1
 (1 row)
 
-SELECT random() < 2 AS ok;          -- volatile built-in, not denylisted
+SELECT random() < 2 AS ok;          -- volatile built-in, on the safe list
  ok 
 ----
  t
