@@ -142,10 +142,13 @@ the following operations are blocked:
   PREPARED, ROLLBACK PREPARED
 - **Side-effecting functions**: volatile functions in
   untrusted languages (C, internal, or an untrusted PL
-  such as `plpython3u`), plus a curated set of
-  side-effecting built-ins (`lo_import`, `pg_read_file`,
-  `set_config`, `pg_advisory_lock`, `nextval`, the BRIN and
-  GIN index maintenance functions, and others).
+  such as `plpython3u`), plus any volatile built-in
+  (`pg_catalog`) function that is not on a small allow-list
+  of built-ins confirmed to have no observable side effect
+  (`random()`, `clock_timestamp()`, and similar). A volatile
+  built-in is blocked by default; only functions verified
+  harmless are exempted, so a new PostgreSQL release that
+  adds a side-effecting built-in is blocked automatically.
   A `DO` block or `CALL` in an untrusted language is
   blocked for the same reason. Arguments count as part of
   the statement, so a blocked function is rejected whether
@@ -275,11 +278,15 @@ with connection poolers.
 
 ## Known Limitations
 
-- The list of side-effecting built-in functions is curated
-  and deliberately conservative rather than exhaustive.
-  Most such functions are superuser-only in any case; the
-  notable exceptions, the advisory-lock and sequence
-  functions, are on the list. A volatile function in a
+- The allow-list of harmless volatile built-in functions is
+  deliberately conservative rather than exhaustive: a
+  volatile built-in that is actually harmless but missing
+  from the list is blocked anyway, which can surface as a
+  restricted session being refused a read-only built-in
+  call that a future release should add to the list. This
+  is a usability trade-off in favour of failing closed: a
+  newly added side-effecting built-in is blocked by default
+  rather than silently allowed. A volatile function in a
   trusted language is allowed to run, and any write it
   performs is caught at execution instead.
 - Enforcement anchors on the session user. A superuser can
