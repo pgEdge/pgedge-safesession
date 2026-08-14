@@ -15,12 +15,16 @@
  * dropped it from that include chain, so include it explicitly; on
  * PostgreSQL 14-18 the header is already in the chain and this is a no-op.
  */
+#include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/pg_aggregate.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "executor/executor.h"
 #include "fmgr.h"
@@ -37,10 +41,12 @@
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/plancache.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -133,6 +139,7 @@ name_is_dangerous_builtin(const char *proname)
 }
 
 static bool function_is_blocked(Oid funcid, void *context);
+static bool query_has_blocked_function_walker(Node *node, void *context);
 
 /*
  * Is this function's language "trusted", i.e. does its body run its work
@@ -328,6 +335,97 @@ function_is_blocked(Oid funcid, void *context)
 }
 
 /*
+ * Does any CHECK constraint on this domain, or on any domain it is
+ * stacked over, call a function a restricted session must not run?
+ *
+ * A domain's constraint expressions are not part of the Query or
+ * Plan tree the walker otherwise sees: they are fetched from
+ * pg_constraint and evaluated by the executor at runtime through the
+ * domain constraint cache in typcache.c. This mirrors that lookup
+ * (same catalog, same index, same contype filter) but walks the raw
+ * expression with the existing function-blocked walker instead of
+ * building an executable DomainConstraintState.
+ *
+ * A domain may be declared over another domain, and each level can
+ * carry its own constraints, so this walks up through typbasetype
+ * until a non-domain base type is reached.
+ */
+static bool
+domain_constraint_is_blocked(Oid typeOid)
+{
+    for (;;)
+    {
+        HeapTuple    typtup;
+        Form_pg_type typform;
+        Oid          basetypid;
+        Relation     conrel;
+        SysScanDesc  scan;
+        ScanKeyData  skey;
+        HeapTuple    contup;
+        bool         found = false;
+
+        typtup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typeOid));
+        if (!HeapTupleIsValid(typtup))
+            return false;
+
+        typform = (Form_pg_type) GETSTRUCT(typtup);
+        if (typform->typtype != TYPTYPE_DOMAIN)
+        {
+            ReleaseSysCache(typtup);
+            return false;
+        }
+
+        basetypid = typform->typbasetype;
+        ReleaseSysCache(typtup);
+
+        ScanKeyInit(&skey,
+                    Anum_pg_constraint_contypid,
+                    BTEqualStrategyNumber, F_OIDEQ,
+                    ObjectIdGetDatum(typeOid));
+
+        conrel = table_open(ConstraintRelationId, AccessShareLock);
+        scan = systable_beginscan(conrel, ConstraintTypidIndexId,
+                                  true, NULL, 1, &skey);
+
+        while ((contup = systable_getnext(scan)) != NULL)
+        {
+            Form_pg_constraint conform =
+                (Form_pg_constraint) GETSTRUCT(contup);
+            Datum  conbindatum;
+            bool   isnull;
+            Node  *check_expr;
+
+            if (conform->contype != CONSTRAINT_CHECK)
+                continue;
+
+            conbindatum = heap_getattr(contup,
+                                       Anum_pg_constraint_conbin,
+                                       RelationGetDescr(conrel),
+                                       &isnull);
+            if (isnull)
+                continue;
+
+            check_expr = stringToNode(
+                TextDatumGetCString(conbindatum));
+
+            if (query_has_blocked_function_walker(check_expr, NULL))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        systable_endscan(scan);
+        table_close(conrel, AccessShareLock);
+
+        if (found)
+            return true;
+
+        typeOid = basetypid;
+    }
+}
+
+/*
  * Walk a parse-analysed Query, and everything reachable from it
  * (subqueries, CTEs, set operations, join and index quals, aggregates,
  * window functions, ScalarArrayOpExpr, and so on), looking for a
@@ -374,6 +472,20 @@ query_has_blocked_function_walker(Node *node, void *context)
                                  query_has_blocked_function_walker,
                                  context, 0);
     }
+
+    /*
+     * A value being coerced to a domain type will run that domain's
+     * CHECK constraints, which live in pg_constraint rather than in
+     * this expression tree, so they need a separate lookup; see
+     * domain_constraint_is_blocked(). Unlike the Query case above,
+     * this does not return on its own: the node's own arg (the value
+     * being coerced) still needs to be walked below, exactly as it
+     * would be if this case were not here at all.
+     */
+    if (IsA(node, CoerceToDomain) &&
+        domain_constraint_is_blocked(
+            ((CoerceToDomain *) node)->resulttype))
+        return true;
 
     return expression_tree_walker(node,
                                   query_has_blocked_function_walker,
