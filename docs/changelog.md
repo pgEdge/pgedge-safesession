@@ -58,9 +58,8 @@ and this project adheres to
 - The large-object read/write function family beyond
   `lo_import`/`lo_export` (`lo_get`, `loread`, `lo_open`,
   `lo_close`, `lo_lseek`, `lo_tell` and others),
-  `pg_export_snapshot()`, `pg_sequence_last_value()`,
-  `pg_stat_clear_snapshot()`, `pg_sleep()`/
-  `pg_sleep_for()`/`pg_sleep_until()`, and
+  `pg_export_snapshot()`, `pg_stat_clear_snapshot()`,
+  `pg_sleep()`/`pg_sleep_for()`/`pg_sleep_until()`, and
   `pg_blocking_pids()`/`pg_lock_status()` were all
   previously allowed for restricted sessions, since none
   of them appeared on the old denylist. They read or hold

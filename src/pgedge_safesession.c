@@ -79,6 +79,12 @@ void _PG_init(void);
  * filesystem access, no configuration change, no signalling another
  * backend, no replication action, no cross-session lock.
  *
+ * The sequence rule is about advancing one, not about reading one.
+ * nextval() and setval() move a sequence and stay blocked;
+ * pg_sequence_last_value() only reads the current page and is listed,
+ * because pg_sequences is built on it and schema introspection should
+ * not need write access to work.
+ *
  * Built-ins are checked in their own branch in function_is_blocked(),
  * before the non-builtin branch that gates on language trust, so a
  * built-in never reaches that rule regardless of its own language. A
@@ -123,6 +129,7 @@ static const char *const safe_volatile_builtins[] = {
     "pg_partition_ancestors",
     "pg_partition_tree",
     "pg_relation_size",
+    "pg_sequence_last_value",
     "pg_stat_get_io",
     "pg_stat_get_recovery_prefetch",
     "pg_stat_get_xact_blocks_fetched",
