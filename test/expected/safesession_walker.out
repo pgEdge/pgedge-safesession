@@ -117,6 +117,12 @@ SELECT random() < 2 AS ok;          -- volatile built-in, on the safe list
  t
 (1 row)
 
+SELECT pg_notify('safesession_walk_channel', 'payload'); -- volatile built-in, on the safe list (function form of NOTIFY)
+ pg_notify 
+-----------
+ 
+(1 row)
+
 SELECT count(*) FROM test_walk;     -- built-in aggregate
  count 
 -------

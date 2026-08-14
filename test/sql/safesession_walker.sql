@@ -86,6 +86,7 @@ SELECT lo_creat(-1);
 SELECT walk_vol(1);                 -- volatile, trusted language
 SELECT walk_imm(1);                 -- immutable
 SELECT random() < 2 AS ok;          -- volatile built-in, on the safe list
+SELECT pg_notify('safesession_walk_channel', 'payload'); -- volatile built-in, on the safe list (function form of NOTIFY)
 SELECT count(*) FROM test_walk;     -- built-in aggregate
 SELECT id FROM test_walk WHERE id = 2 ORDER BY id;
 

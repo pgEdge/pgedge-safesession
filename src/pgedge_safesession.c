@@ -104,6 +104,7 @@ static const char *const safe_volatile_builtins[] = {
     "pg_last_wal_replay_lsn",
     "pg_last_xact_replay_timestamp",
     "pg_notification_queue_usage",
+    "pg_notify",
     "pg_partition_ancestors",
     "pg_partition_tree",
     "pg_relation_size",
