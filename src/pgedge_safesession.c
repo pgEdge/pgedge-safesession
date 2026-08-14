@@ -26,6 +26,10 @@
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
+/* ExplainState, referenced only by the PostgreSQL 19 planner_hook below. */
+#if PG_VERSION_NUM >= 190000
+#include "commands/explain_state.h"
+#endif
 #include "commands/prepare.h"
 #include "executor/executor.h"
 #include "fmgr.h"
@@ -519,16 +523,17 @@ static bool  role_cache_valid = false;
  * Whether this session was restricted the last time we looked, as a
  * tri-state: -1 until the first observation, then 0 or 1.
  *
- * The blocked-function check runs in the post_parse_analyze hook, so it
- * runs when a statement or expression is parsed and not when it is
- * executed. A plan built whilst the session was unrestricted is therefore
- * reused without the check running again, and PL/pgSQL caches the plans
- * for its expressions aggressively, so a session that becomes restricted
- * part-way through its life could go on calling blocked functions through
- * anything it had already executed. Nor can the check simply be moved to
- * execution time: PL/pgSQL evaluates a simple expression through
- * ExecEvalExprSwitchContext() without ever starting the executor, so the
- * ExecutorStart hook does not see it.
+ * The blocked-function check runs in the post_parse_analyze and planner
+ * hooks, so it runs when a statement or expression is parsed and planned,
+ * not when it is executed. A plan built whilst the session was
+ * unrestricted is therefore reused without either check running again,
+ * and PL/pgSQL caches the plans for its expressions aggressively, so a
+ * session that becomes restricted part-way through its life could go on
+ * calling blocked functions through anything it had already executed.
+ * Nor can the check simply be moved to execution time: PL/pgSQL
+ * evaluates a simple expression through ExecEvalExprSwitchContext()
+ * without ever starting the executor, so the ExecutorStart hook does not
+ * see it.
  *
  * What makes the cached plan wrong is the change of state, so treat that
  * change as an invalidation event and discard the cached plans, exactly as
@@ -763,7 +768,7 @@ safesession_reject(int sqlerrcode, const char *msg)
 /*
  * ExecutorStart hook: block DML (including data-modifying CTEs) for
  * restricted roles. Blocked function calls are handled earlier, in the
- * post_parse_analyze hook.
+ * post_parse_analyze and planner hooks.
  */
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
@@ -1250,9 +1255,9 @@ execute_params_have_blocked_function(ExecuteStmt *stmt,
  * nobody has considered is therefore denied rather than let through, and
  * a new statement type added by a future PostgreSQL release is denied
  * until it is deliberately allowed. Function-call detection, by contrast,
- * lives in the post_parse_analyze hook and walks the whole query with
- * check_functions_in_node(), so it does not depend on enumerating plan
- * shapes and does not have a fail-open default.
+ * lives in the post_parse_analyze and planner hooks and walks the whole
+ * query with check_functions_in_node(), so it does not depend on
+ * enumerating plan shapes and does not have a fail-open default.
  */
 static void
 safesession_ProcessUtility(PlannedStmt *pstmt,
