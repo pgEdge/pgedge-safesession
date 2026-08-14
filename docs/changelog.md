@@ -98,6 +98,15 @@ and this project adheres to
   and it made the `jstate` argument of
   `post_parse_analyze_hook_type` const. Builds on
   PostgreSQL 14 to 18 are unchanged.
+- A restricted session could run a blocked function by selecting
+  from a view whose definition called it, or through a row-level
+  security policy's `USING`/`WITH CHECK` clause. View bodies and
+  RLS quals are both substituted during query rewrite, which runs
+  after the parse-analysis stage the function-blocking check used,
+  so neither was visible to it. A restricted session could also run
+  a blocked function via a domain's `CHECK` constraint, which is
+  fetched and evaluated by the executor separately from the query
+  tree and so was not examined either. All three are checked now.
 
 ## [1.0-alpha1] - Unreleased
 
