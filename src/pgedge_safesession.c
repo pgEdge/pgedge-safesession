@@ -29,6 +29,7 @@
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_node.h"
@@ -56,6 +57,7 @@ static bool safesession_block_all_c_functions = false;
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
+static planner_hook_type prev_planner_hook = NULL;
 
 /* Function declarations */
 void _PG_init(void);
@@ -771,6 +773,49 @@ safesession_post_parse_analyze(ParseState *pstate, Query *query
         safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
                            "cannot execute functions that may have"
                            " side effects in a read-only session");
+}
+
+/*
+ * planner_hook: catch a blocked function reachable only through
+ * something QueryRewrite() introduces after post_parse_analyze
+ * already ran, such as a view body spliced into the range table or
+ * an RLS policy's USING/WITH CHECK qual attached to an RTE's
+ * securityQuals. planner_hook receives the Query after rewrite, for
+ * every statement that reaches the planner (simple query protocol,
+ * extended/prepared protocol -- planning happens at Bind, not Parse
+ * -- and SPI queries issued from PL/pgSQL), so it is the first point
+ * at which those substitutions are visible.
+ *
+ * A CMD_UTILITY Query (CALL, EXECUTE, ...) never reaches the
+ * planner, so this does not replace the post_parse_analyze check:
+ * the two cover different statement shapes, with some harmless
+ * overlap for a plain top-level SELECT that calls a blocked function
+ * directly.
+ *
+ * The check runs before chaining to the previous hook or
+ * standard_planner(), both to fail fast and because standard_planner()
+ * may mutate parse in place (e.g. subquery pullup); checking first
+ * means the tree walked is exactly the post-rewrite Query, before any
+ * planner-internal transformation.
+ */
+static PlannedStmt *
+safesession_planner(Query *parse, const char *query_string,
+                    int cursorOptions, ParamListInfo boundParams)
+{
+    if (safesession_block_c_functions &&
+        IsTransactionState() &&
+        current_role_is_restricted() &&
+        query_has_blocked_function(parse))
+        safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                           "cannot execute functions that may have"
+                           " side effects in a read-only session");
+
+    if (prev_planner_hook)
+        return prev_planner_hook(parse, query_string, cursorOptions,
+                                 boundParams);
+    else
+        return standard_planner(parse, query_string, cursorOptions,
+                                boundParams);
 }
 
 /*
@@ -1514,6 +1559,14 @@ _PG_init(void)
     /* Install post_parse_analyze hook (blocked function detection) */
     prev_post_parse_analyze = post_parse_analyze_hook;
     post_parse_analyze_hook = safesession_post_parse_analyze;
+
+    /*
+     * Install planner hook (blocked function detection for anything
+     * QueryRewrite() introduces after post_parse_analyze already ran,
+     * such as a view body or an RLS policy qual)
+     */
+    prev_planner_hook = planner_hook;
+    planner_hook = safesession_planner;
 
     /*
      * Invalidate the cached role-OID list when pg_authid changes (a role
