@@ -66,14 +66,16 @@ void _PG_init(void);
  * filesystem access, no configuration change, no signalling another
  * backend, no replication action, no cross-session lock.
  *
- * A built-in function's language is always internal, so it is never
- * caught by the volatile-user-function rule in function_is_blocked();
- * built-ins are volatility-gated separately, and a VOLATILE one is
- * blocked unless its name is on this list. The list is therefore an
- * allow-list, not a denylist: it only needs to name the built-ins
- * verified safe, not every dangerous one, so a new PostgreSQL release
- * that adds a VOLATILE built-in is blocked by default rather than
- * silently let through.
+ * Built-ins are checked in their own branch in function_is_blocked(),
+ * before the non-builtin branch that gates on language trust, so a
+ * built-in never reaches that rule regardless of its own language. A
+ * VOLATILE built-in is blocked unless its name is on this list, even
+ * one written in a trusted language: pg_relation_size(), for example,
+ * is LANGUAGE sql internally, but still needs an entry here. The list
+ * is therefore an allow-list, not a denylist: it only needs to name
+ * the built-ins verified safe, not every dangerous one, so a new
+ * PostgreSQL release that adds a VOLATILE built-in is blocked by
+ * default rather than silently let through.
  */
 static const char *const safe_volatile_builtins[] = {
     "array_sample",
@@ -294,12 +296,13 @@ aggregate_support_is_blocked(Oid aggfnoid)
  *     trusted languages (SQL, PL/pgSQL, ...) whose writes are caught
  *     downstream, are allowed; or
  *   - a built-in (OID < FirstNormalObjectId) that is marked VOLATILE and
- *     is not on the safe_volatile_builtins allow-list. Built-ins are
- *     always language-internal, so they are never caught by the rule
- *     above; unlike user functions, an unrecognised VOLATILE built-in is
- *     blocked by default rather than allowed by default, because the set
- *     of built-ins is version-dependent and grows with every PostgreSQL
- *     release.
+ *     is not on the safe_volatile_builtins allow-list. This branch runs
+ *     before the language-trust rule above, so a built-in is gated here
+ *     regardless of its own language — including a trusted-language one
+ *     such as pg_relation_size() (LANGUAGE sql). Unlike user functions,
+ *     an unrecognised VOLATILE built-in is blocked by default rather
+ *     than allowed by default, because the set of built-ins is
+ *     version-dependent and grows with every PostgreSQL release.
  *
  * Harmless volatile built-ins such as random() and clock_timestamp() are
  * deliberately allow-listed. Separately, when block_all_c_functions is
