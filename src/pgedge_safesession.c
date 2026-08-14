@@ -15,13 +15,22 @@
  * dropped it from that include chain, so include it explicitly; on
  * PostgreSQL 14-18 the header is already in the chain and this is a no-op.
  */
+#include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/pg_aggregate.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_type.h"
 #include "commands/defrem.h"
+/* ExplainState, referenced only by the PostgreSQL 19 planner_hook below. */
+#if PG_VERSION_NUM >= 190000
+#include "commands/explain_state.h"
+#endif
+#include "commands/prepare.h"
 #include "executor/executor.h"
 #include "fmgr.h"
 #include "miscadmin.h"
@@ -29,6 +38,7 @@
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_node.h"
@@ -36,10 +46,12 @@
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/plancache.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -56,6 +68,7 @@ static bool safesession_block_all_c_functions = false;
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
+static planner_hook_type prev_planner_hook = NULL;
 
 /* Function declarations */
 void _PG_init(void);
@@ -131,6 +144,7 @@ name_is_dangerous_builtin(const char *proname)
 }
 
 static bool function_is_blocked(Oid funcid, void *context);
+static bool query_has_blocked_function_walker(Node *node, void *context);
 
 /*
  * Is this function's language "trusted", i.e. does its body run its work
@@ -326,6 +340,97 @@ function_is_blocked(Oid funcid, void *context)
 }
 
 /*
+ * Does any CHECK constraint on this domain, or on any domain it is
+ * stacked over, call a function a restricted session must not run?
+ *
+ * A domain's constraint expressions are not part of the Query or
+ * Plan tree the walker otherwise sees: they are fetched from
+ * pg_constraint and evaluated by the executor at runtime through the
+ * domain constraint cache in typcache.c. This mirrors that lookup
+ * (same catalog, same index, same contype filter) but walks the raw
+ * expression with the existing function-blocked walker instead of
+ * building an executable DomainConstraintState.
+ *
+ * A domain may be declared over another domain, and each level can
+ * carry its own constraints, so this walks up through typbasetype
+ * until a non-domain base type is reached.
+ */
+static bool
+domain_constraint_is_blocked(Oid typeOid)
+{
+    for (;;)
+    {
+        HeapTuple    typtup;
+        Form_pg_type typform;
+        Oid          basetypid;
+        Relation     conrel;
+        SysScanDesc  scan;
+        ScanKeyData  skey;
+        HeapTuple    contup;
+        bool         found = false;
+
+        typtup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typeOid));
+        if (!HeapTupleIsValid(typtup))
+            return false;
+
+        typform = (Form_pg_type) GETSTRUCT(typtup);
+        if (typform->typtype != TYPTYPE_DOMAIN)
+        {
+            ReleaseSysCache(typtup);
+            return false;
+        }
+
+        basetypid = typform->typbasetype;
+        ReleaseSysCache(typtup);
+
+        ScanKeyInit(&skey,
+                    Anum_pg_constraint_contypid,
+                    BTEqualStrategyNumber, F_OIDEQ,
+                    ObjectIdGetDatum(typeOid));
+
+        conrel = table_open(ConstraintRelationId, AccessShareLock);
+        scan = systable_beginscan(conrel, ConstraintTypidIndexId,
+                                  true, NULL, 1, &skey);
+
+        while ((contup = systable_getnext(scan)) != NULL)
+        {
+            Form_pg_constraint conform =
+                (Form_pg_constraint) GETSTRUCT(contup);
+            Datum  conbindatum;
+            bool   isnull;
+            Node  *check_expr;
+
+            if (conform->contype != CONSTRAINT_CHECK)
+                continue;
+
+            conbindatum = heap_getattr(contup,
+                                       Anum_pg_constraint_conbin,
+                                       RelationGetDescr(conrel),
+                                       &isnull);
+            if (isnull)
+                continue;
+
+            check_expr = stringToNode(
+                TextDatumGetCString(conbindatum));
+
+            if (query_has_blocked_function_walker(check_expr, NULL))
+            {
+                found = true;
+                break;
+            }
+        }
+
+        systable_endscan(scan);
+        table_close(conrel, AccessShareLock);
+
+        if (found)
+            return true;
+
+        typeOid = basetypid;
+    }
+}
+
+/*
  * Walk a parse-analysed Query, and everything reachable from it
  * (subqueries, CTEs, set operations, join and index quals, aggregates,
  * window functions, ScalarArrayOpExpr, and so on), looking for a
@@ -373,6 +478,20 @@ query_has_blocked_function_walker(Node *node, void *context)
                                  context, 0);
     }
 
+    /*
+     * A value being coerced to a domain type will run that domain's
+     * CHECK constraints, which live in pg_constraint rather than in
+     * this expression tree, so they need a separate lookup; see
+     * domain_constraint_is_blocked(). Unlike the Query case above,
+     * this does not return on its own: the node's own arg (the value
+     * being coerced) still needs to be walked below, exactly as it
+     * would be if this case were not here at all.
+     */
+    if (IsA(node, CoerceToDomain) &&
+        domain_constraint_is_blocked(
+            ((CoerceToDomain *) node)->resulttype))
+        return true;
+
     return expression_tree_walker(node,
                                   query_has_blocked_function_walker,
                                   context);
@@ -404,16 +523,17 @@ static bool  role_cache_valid = false;
  * Whether this session was restricted the last time we looked, as a
  * tri-state: -1 until the first observation, then 0 or 1.
  *
- * The blocked-function check runs in the post_parse_analyze hook, so it
- * runs when a statement or expression is parsed and not when it is
- * executed. A plan built whilst the session was unrestricted is therefore
- * reused without the check running again, and PL/pgSQL caches the plans
- * for its expressions aggressively, so a session that becomes restricted
- * part-way through its life could go on calling blocked functions through
- * anything it had already executed. Nor can the check simply be moved to
- * execution time: PL/pgSQL evaluates a simple expression through
- * ExecEvalExprSwitchContext() without ever starting the executor, so the
- * ExecutorStart hook does not see it.
+ * The blocked-function check runs in the post_parse_analyze and planner
+ * hooks, so it runs when a statement or expression is parsed and planned,
+ * not when it is executed. A plan built whilst the session was
+ * unrestricted is therefore reused without either check running again,
+ * and PL/pgSQL caches the plans for its expressions aggressively, so a
+ * session that becomes restricted part-way through its life could go on
+ * calling blocked functions through anything it had already executed.
+ * Nor can the check simply be moved to execution time: PL/pgSQL
+ * evaluates a simple expression through ExecEvalExprSwitchContext()
+ * without ever starting the executor, so the ExecutorStart hook does not
+ * see it.
  *
  * What makes the cached plan wrong is the change of state, so treat that
  * change as an invalidation event and discard the cached plans, exactly as
@@ -648,7 +768,7 @@ safesession_reject(int sqlerrcode, const char *msg)
 /*
  * ExecutorStart hook: block DML (including data-modifying CTEs) for
  * restricted roles. Blocked function calls are handled earlier, in the
- * post_parse_analyze hook.
+ * post_parse_analyze and planner hooks.
  */
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
@@ -771,6 +891,67 @@ safesession_post_parse_analyze(ParseState *pstate, Query *query
         safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
                            "cannot execute functions that may have"
                            " side effects in a read-only session");
+}
+
+/*
+ * planner_hook: catch a blocked function reachable only through
+ * something QueryRewrite() introduces after post_parse_analyze
+ * already ran, such as a view body spliced into the range table or
+ * an RLS policy's USING/WITH CHECK qual attached to an RTE's
+ * securityQuals. planner_hook receives the Query after rewrite, for
+ * every statement that reaches the planner (simple query protocol,
+ * extended/prepared protocol -- planning happens at Bind, not Parse
+ * -- and SPI queries issued from PL/pgSQL), so it is the first point
+ * at which those substitutions are visible.
+ *
+ * A CMD_UTILITY Query (CALL, EXECUTE, ...) never reaches the
+ * planner, so this does not replace the post_parse_analyze check:
+ * the two cover different statement shapes, with some harmless
+ * overlap for a plain top-level SELECT that calls a blocked function
+ * directly.
+ *
+ * The check runs before chaining to the previous hook or
+ * standard_planner(), both to fail fast and because standard_planner()
+ * may mutate parse in place (e.g. subquery pullup); checking first
+ * means the tree walked is exactly the post-rewrite Query, before any
+ * planner-internal transformation.
+ *
+ * PostgreSQL 19 added a 5th parameter, an ExplainState *es, to both
+ * planner_hook_type and standard_planner(); this function's own logic
+ * never touches it, so it is only accepted and forwarded unchanged on
+ * PG19+, following the same version-branching approach used for the
+ * jstate parameter in safesession_post_parse_analyze() above.
+ */
+static PlannedStmt *
+safesession_planner(Query *parse, const char *query_string,
+                    int cursorOptions, ParamListInfo boundParams
+#if PG_VERSION_NUM >= 190000
+                    , ExplainState *es
+#endif
+                    )
+{
+    if (safesession_block_c_functions &&
+        IsTransactionState() &&
+        current_role_is_restricted() &&
+        query_has_blocked_function(parse))
+        safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                           "cannot execute functions that may have"
+                           " side effects in a read-only session");
+
+    if (prev_planner_hook)
+        return prev_planner_hook(parse, query_string, cursorOptions,
+                                 boundParams
+#if PG_VERSION_NUM >= 190000
+                                 , es
+#endif
+                                 );
+    else
+        return standard_planner(parse, query_string, cursorOptions,
+                                boundParams
+#if PG_VERSION_NUM >= 190000
+                                , es
+#endif
+                                );
 }
 
 /*
@@ -1006,21 +1187,41 @@ extract_execute_stmt(Node *node)
  * parse tree is copied first, both because the parser scribbles on its
  * input and because core transforms the same list again afterwards.
  *
- * Unlike core we do not coerce the result to the prepared statement's
- * declared parameter types: coercion only adds cast expressions, and its
- * purpose is type checking, which core still does when it evaluates the
- * parameters for real. Skipping it also means we need not look the
- * prepared statement up at all, so a wrong number of parameters, or a
- * statement name that does not exist, is left for core to report, except
- * where the parameter list is rejected here first.
+ * Unlike core we do not coerce the parameter expression itself to the
+ * prepared statement's declared parameter types: coercion only adds cast
+ * expressions, and its purpose here would be type checking, which core
+ * still does when it evaluates the parameters for real. We do, however,
+ * separately check the declared parameter types themselves for a blocked
+ * domain constraint, below, since a value is coerced to its declared
+ * type when it is bound regardless of what expression was passed for it,
+ * and a domain's CHECK constraint is a security-relevant side effect,
+ * not mere type-checking, so it must be caught even when the parameter
+ * expression that will be coerced into it has nothing to do with the
+ * blocked function itself (e.g. "PREPARE q(d) AS SELECT 1; EXECUTE
+ * q('x')" for a domain d with a blocked-function CHECK). This means we
+ * do look the prepared statement up now.
  */
 static bool
 execute_params_have_blocked_function(ExecuteStmt *stmt,
                                      const char *queryString)
 {
-    ParseState *pstate;
-    ListCell   *lc;
-    bool        found = false;
+    ParseState        *pstate;
+    ListCell          *lc;
+    PreparedStatement *pstmt_lookup;
+    bool               found = false;
+
+    pstmt_lookup = FetchPreparedStatement(stmt->name, false);
+    if (pstmt_lookup != NULL)
+    {
+        int i;
+
+        for (i = 0; i < pstmt_lookup->plansource->num_params; i++)
+        {
+            if (domain_constraint_is_blocked(
+                    pstmt_lookup->plansource->param_types[i]))
+                return true;
+        }
+    }
 
     if (stmt->params == NIL)
         return false;
@@ -1054,9 +1255,9 @@ execute_params_have_blocked_function(ExecuteStmt *stmt,
  * nobody has considered is therefore denied rather than let through, and
  * a new statement type added by a future PostgreSQL release is denied
  * until it is deliberately allowed. Function-call detection, by contrast,
- * lives in the post_parse_analyze hook and walks the whole query with
- * check_functions_in_node(), so it does not depend on enumerating plan
- * shapes and does not have a fail-open default.
+ * lives in the post_parse_analyze and planner hooks and walks the whole
+ * query with check_functions_in_node(), so it does not depend on
+ * enumerating plan shapes and does not have a fail-open default.
  */
 static void
 safesession_ProcessUtility(PlannedStmt *pstmt,
@@ -1514,6 +1715,14 @@ _PG_init(void)
     /* Install post_parse_analyze hook (blocked function detection) */
     prev_post_parse_analyze = post_parse_analyze_hook;
     post_parse_analyze_hook = safesession_post_parse_analyze;
+
+    /*
+     * Install planner hook (blocked function detection for anything
+     * QueryRewrite() introduces after post_parse_analyze already ran,
+     * such as a view body or an RLS policy qual)
+     */
+    prev_planner_hook = planner_hook;
+    planner_hook = safesession_planner;
 
     /*
      * Invalidate the cached role-OID list when pg_authid changes (a role
