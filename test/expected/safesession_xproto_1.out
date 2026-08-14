@@ -1,0 +1,37 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+-- Domain CHECK constraints reached by coercing a bound parameter, over
+-- the extended query protocol.
+--
+-- exec_bind_message() coerces each parameter to its declared type
+-- before it fetches the plan, and for a domain that coercion runs the
+-- CHECK constraint. Everything that walks a Query therefore runs too
+-- late to stop it: parse analysis happens at Parse, when no value is
+-- bound yet, and the planner is not reached until after the coercion.
+-- The constraint is caught at expression compile time instead, by the
+-- object access hook.
+--
+-- This is the path JDBC, psycopg, node-postgres and npgsql take for an
+-- ordinary parameterised query, so it is not an exotic one.
+--
+-- set_config() is used throughout because it escapes the read-only
+-- floor (it changes a GUC rather than writing data), so it would
+-- otherwise take effect; SHOW work_mem shows whether it did.
+-- Parse/Bind/Execute is driven from psql's \bind, which arrived in
+-- PostgreSQL 16, and nothing else in psql can express a Bind. Stop the
+-- file here on an older psql: reading on would report every \bind as an
+-- unknown backslash command, which \if cannot prevent, since psql
+-- recognises a command before it decides whether the branch is live.
+-- VERSION_NUM is psql's own version rather than the server's, which is
+-- what matters for a client-side feature. What this leaves is matched
+-- by safesession_xproto_1.out. safesession_domainexec covers the same
+-- hook through coercions needing no protocol support, on every version.
+SELECT :VERSION_NUM < 160000 AS psql_lacks_bind \gset
+\if :psql_lacks_bind
+    \q
