@@ -106,7 +106,21 @@ and this project adheres to
   so neither was visible to it. A restricted session could also run
   a blocked function via a domain's `CHECK` constraint, which is
   fetched and evaluated by the executor separately from the query
-  tree and so was not examined either. All three are checked now.
+  tree and so was not examined either. Domain `CHECK` constraints
+  reached via a coercion that appears in a query's parse tree,
+  including as an `EXECUTE` statement's declared parameter type,
+  are now checked too; a domain constraint reached only through a
+  PL/pgSQL variable's declared type, or a SQL-language function's
+  return type, is not visible to this check and remains a known
+  limitation.
+- Examining view bodies for blocked functions is a real behaviour
+  change, not just a bug fix: a restricted role reading a view
+  whose definition calls a side-effecting function in an untrusted
+  language, for example a monitoring view built over
+  `pg_stat_statements` that happens to wrap such a call, is now
+  rejected where it previously was not. This tightening is
+  intentional, but worth knowing about if existing read-only
+  monitoring queries are built as views.
 
 ## [1.0-alpha1] - Unreleased
 

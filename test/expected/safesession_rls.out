@@ -87,6 +87,40 @@ SHOW work_mem;
 
 RESET SESSION AUTHORIZATION;
 SET pgedge_safesession.block_c_functions = on;
+DROP POLICY p_using ON test_rls;
+-- A WITH CHECK qual that calls a blocked function, exercised by a
+-- write. Writes are blocked outright for a restricted role by
+-- default (block_dml), so that is turned off here to isolate the
+-- WITH CHECK path from the DML check, the same way block_ddl is
+-- turned off in safesession_execparams.sql to isolate a single
+-- protection layer.
+GRANT INSERT ON test_rls TO safesession_rls;
+CREATE POLICY p_withcheck ON test_rls FOR INSERT
+    WITH CHECK (set_config('work_mem', '65MB', false) IS NOT NULL);
+SET pgedge_safesession.block_dml = off;
+SET SESSION AUTHORIZATION safesession_rls;
+SET work_mem = '4MB';
+-- A blocked function reached only through an RLS WITH CHECK qual
+-- must be rejected
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+INSERT INTO test_rls VALUES (3, 'c');
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.block_dml = on;
+DROP POLICY p_withcheck ON test_rls;
+REVOKE INSERT ON test_rls FROM safesession_rls;
 -- Cleanup
 RESET pgedge_safesession.roles;
 DROP TABLE test_rls;

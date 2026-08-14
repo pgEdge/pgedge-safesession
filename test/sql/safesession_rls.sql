@@ -70,6 +70,33 @@ SELECT * FROM test_rls;
 SHOW work_mem;
 RESET SESSION AUTHORIZATION;
 SET pgedge_safesession.block_c_functions = on;
+DROP POLICY p_using ON test_rls;
+
+-- A WITH CHECK qual that calls a blocked function, exercised by a
+-- write. Writes are blocked outright for a restricted role by
+-- default (block_dml), so that is turned off here to isolate the
+-- WITH CHECK path from the DML check, the same way block_ddl is
+-- turned off in safesession_execparams.sql to isolate a single
+-- protection layer.
+GRANT INSERT ON test_rls TO safesession_rls;
+CREATE POLICY p_withcheck ON test_rls FOR INSERT
+    WITH CHECK (set_config('work_mem', '65MB', false) IS NOT NULL);
+
+SET pgedge_safesession.block_dml = off;
+SET SESSION AUTHORIZATION safesession_rls;
+
+SET work_mem = '4MB';
+
+-- A blocked function reached only through an RLS WITH CHECK qual
+-- must be rejected
+SHOW work_mem;
+INSERT INTO test_rls VALUES (3, 'c');
+SHOW work_mem;
+
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.block_dml = on;
+DROP POLICY p_withcheck ON test_rls;
+REVOKE INSERT ON test_rls FROM safesession_rls;
 
 -- Cleanup
 RESET pgedge_safesession.roles;

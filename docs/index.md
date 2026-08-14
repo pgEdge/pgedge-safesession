@@ -151,7 +151,12 @@ the following operations are blocked:
   the statement, so a blocked function is rejected whether
   it is called directly, passed as a `CALL` argument, or
   passed as an `EXECUTE` parameter (including through
-  `EXPLAIN EXECUTE` and `CREATE TABLE AS ... EXECUTE`).
+  `EXPLAIN EXECUTE` and `CREATE TABLE AS ... EXECUTE`). A
+  function reached only indirectly, through a view body, a
+  row-level security policy's `USING`/`WITH CHECK` qual, or
+  a domain `CHECK` constraint (including one reached via a
+  prepared statement's declared parameter type), is
+  rejected the same way as a direct call.
 - **Exclusive locks**: LOCK TABLE with modes above
   ROW SHARE
 - **GUC tampering**: any attempt to relax
@@ -245,13 +250,16 @@ inside a superuser-owned SECURITY DEFINER function.
 ### Restriction Changes and Cached Plans
 
 Side-effecting function calls are detected when a statement
-or expression is parsed, rather than when it is executed, so
-a plan cached before a session became restricted would
-otherwise be replayed without the check running again. That
-matters because a session can become restricted part-way
-through its life: the roles list can be edited and the
-configuration reloaded, or a role can be granted membership
-of a listed role, whilst sessions are open.
+or expression is parsed, and again when it is planned (to
+catch a function reached only through a view body or an RLS
+qual, which are substituted during query rewrite, after
+parse analysis), rather than when it is executed, so a plan
+cached before a session became restricted would otherwise be
+replayed without either check running again. That matters
+because a session can become restricted part-way through its
+life: the roles list can be edited and the configuration
+reloaded, or a role can be granted membership of a listed
+role, whilst sessions are open.
 
 Becoming restricted is therefore treated as an invalidation
 event, and the session's cached plans are discarded exactly
@@ -292,9 +300,17 @@ with connection poolers.
   `ALTER SYSTEM`). Setting it only for a single session
   with `SET` would be undone by that session's `DISCARD
   ALL` or `RESET ALL`.
-- SafeSession and Spock both install executor and utility
-  hooks. They chain correctly, but if both are deployed the
-  interaction has not been exhaustively tested.
+- SafeSession and Spock both install executor, utility, and
+  planner hooks. They chain correctly, but if both are
+  deployed the interaction has not been exhaustively tested.
+- A domain's `CHECK` constraint calling a blocked function is
+  only visible to this check when it is reached via a
+  coercion in a query's parse tree. A constraint reached only
+  through a PL/pgSQL variable's declared type, or a
+  SQL-language function's `RETURNS` type, is architecturally
+  invisible to a Query/Plan-tree walker and is not detected.
+  This is a permanent limitation, not a bug to be fixed
+  within this check's approach.
 
 ## Example
 

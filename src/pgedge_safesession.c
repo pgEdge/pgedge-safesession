@@ -26,6 +26,7 @@
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
+#include "commands/prepare.h"
 #include "executor/executor.h"
 #include "fmgr.h"
 #include "miscadmin.h"
@@ -909,10 +910,20 @@ safesession_post_parse_analyze(ParseState *pstate, Query *query
  * may mutate parse in place (e.g. subquery pullup); checking first
  * means the tree walked is exactly the post-rewrite Query, before any
  * planner-internal transformation.
+ *
+ * PostgreSQL 19 added a 5th parameter, an ExplainState *es, to both
+ * planner_hook_type and standard_planner(); this function's own logic
+ * never touches it, so it is only accepted and forwarded unchanged on
+ * PG19+, following the same version-branching approach used for the
+ * jstate parameter in safesession_post_parse_analyze() above.
  */
 static PlannedStmt *
 safesession_planner(Query *parse, const char *query_string,
-                    int cursorOptions, ParamListInfo boundParams)
+                    int cursorOptions, ParamListInfo boundParams
+#if PG_VERSION_NUM >= 190000
+                    , ExplainState *es
+#endif
+                    )
 {
     if (safesession_block_c_functions &&
         IsTransactionState() &&
@@ -924,10 +935,18 @@ safesession_planner(Query *parse, const char *query_string,
 
     if (prev_planner_hook)
         return prev_planner_hook(parse, query_string, cursorOptions,
-                                 boundParams);
+                                 boundParams
+#if PG_VERSION_NUM >= 190000
+                                 , es
+#endif
+                                 );
     else
         return standard_planner(parse, query_string, cursorOptions,
-                                boundParams);
+                                boundParams
+#if PG_VERSION_NUM >= 190000
+                                , es
+#endif
+                                );
 }
 
 /*
@@ -1163,21 +1182,41 @@ extract_execute_stmt(Node *node)
  * parse tree is copied first, both because the parser scribbles on its
  * input and because core transforms the same list again afterwards.
  *
- * Unlike core we do not coerce the result to the prepared statement's
- * declared parameter types: coercion only adds cast expressions, and its
- * purpose is type checking, which core still does when it evaluates the
- * parameters for real. Skipping it also means we need not look the
- * prepared statement up at all, so a wrong number of parameters, or a
- * statement name that does not exist, is left for core to report, except
- * where the parameter list is rejected here first.
+ * Unlike core we do not coerce the parameter expression itself to the
+ * prepared statement's declared parameter types: coercion only adds cast
+ * expressions, and its purpose here would be type checking, which core
+ * still does when it evaluates the parameters for real. We do, however,
+ * separately check the declared parameter types themselves for a blocked
+ * domain constraint, below, since a value is coerced to its declared
+ * type when it is bound regardless of what expression was passed for it,
+ * and a domain's CHECK constraint is a security-relevant side effect,
+ * not mere type-checking, so it must be caught even when the parameter
+ * expression that will be coerced into it has nothing to do with the
+ * blocked function itself (e.g. "PREPARE q(d) AS SELECT 1; EXECUTE
+ * q('x')" for a domain d with a blocked-function CHECK). This means we
+ * do look the prepared statement up now.
  */
 static bool
 execute_params_have_blocked_function(ExecuteStmt *stmt,
                                      const char *queryString)
 {
-    ParseState *pstate;
-    ListCell   *lc;
-    bool        found = false;
+    ParseState        *pstate;
+    ListCell          *lc;
+    PreparedStatement *pstmt_lookup;
+    bool               found = false;
+
+    pstmt_lookup = FetchPreparedStatement(stmt->name, false);
+    if (pstmt_lookup != NULL)
+    {
+        int i;
+
+        for (i = 0; i < pstmt_lookup->plansource->num_params; i++)
+        {
+            if (domain_constraint_is_blocked(
+                    pstmt_lookup->plansource->param_types[i]))
+                return true;
+        }
+    }
 
     if (stmt->params == NIL)
         return false;
