@@ -49,13 +49,12 @@ CREATE DOMAIN d_exec AS text
 
 -- A PL/pgSQL variable declared as the domain and never assigned: the
 -- constraint runs when the block initialises it to NULL.
-CREATE FUNCTION de_declare() RETURNS int AS $$
-DECLARE
-    v d_exec;
-BEGIN
-    RETURN 1;
-END
-$$ LANGUAGE plpgsql;
+--
+-- Kept on one line to hold the CONTEXT line number below steady: PG 15
+-- (acb2d7d5d23) reports the variable's own declaration line, PG 14 the
+-- enclosing block's BEGIN, and on one line those coincide.
+CREATE FUNCTION de_declare() RETURNS int
+    AS $$DECLARE v d_exec; BEGIN RETURN 1; END$$ LANGUAGE plpgsql;
 
 -- A PL/pgSQL function returning the domain: the coercion is applied to
 -- the result, not written in the body.

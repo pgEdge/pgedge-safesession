@@ -52,13 +52,12 @@ CREATE DOMAIN d_exec AS text
     CHECK (set_config('work_mem', '64MB', false) IS NOT NULL);
 -- A PL/pgSQL variable declared as the domain and never assigned: the
 -- constraint runs when the block initialises it to NULL.
-CREATE FUNCTION de_declare() RETURNS int AS $$
-DECLARE
-    v d_exec;
-BEGIN
-    RETURN 1;
-END
-$$ LANGUAGE plpgsql;
+--
+-- Kept on one line to hold the CONTEXT line number below steady: PG 15
+-- (acb2d7d5d23) reports the variable's own declaration line, PG 14 the
+-- enclosing block's BEGIN, and on one line those coincide.
+CREATE FUNCTION de_declare() RETURNS int
+    AS $$DECLARE v d_exec; BEGIN RETURN 1; END$$ LANGUAGE plpgsql;
 -- A PL/pgSQL function returning the domain: the coercion is applied to
 -- the result, not written in the body.
 CREATE FUNCTION de_plpgsql_returns() RETURNS d_exec AS $$
@@ -78,7 +77,7 @@ SET work_mem = '4MB';
 SELECT de_declare();
 ERROR:  cannot execute functions that may have side effects in a read-only session
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
-CONTEXT:  PL/pgSQL function de_declare() line 3 during statement block local variable initialization
+CONTEXT:  PL/pgSQL function de_declare() line 1 during statement block local variable initialization
 SHOW work_mem;
  work_mem 
 ----------
