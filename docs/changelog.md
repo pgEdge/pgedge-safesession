@@ -36,6 +36,15 @@ and this project adheres to
   operators) are allowed. Use `block_all_c_functions = on`
   to restore the previous behavior of blocking all
   C functions.
+- Built-in function blocking now denies any VOLATILE
+  built-in by default, allowing only a curated list of
+  built-ins confirmed to have no observable side effect
+  (e.g., `random()`, `clock_timestamp()`). Previously,
+  built-ins were allowed by default and blocked only if
+  their name matched a fixed denylist, regardless of
+  volatility. PostgreSQL ships hundreds of volatile
+  built-ins, and the old denylist covered only a small
+  fraction of them.
 
 ### Fixed
 
@@ -46,6 +55,19 @@ and this project adheres to
   any of core's read-only checks, and the table owner may
   call them, so a restricted role could write to indexes on
   tables it owns. All four are now blocked.
+- The large-object read/write function family beyond
+  `lo_import`/`lo_export` (`lo_get`, `loread`, `lo_open`,
+  `lo_close`, `lo_lseek`, `lo_tell` and others),
+  `pg_export_snapshot()`, `pg_sequence_last_value()`,
+  `pg_stat_clear_snapshot()`, `pg_sleep()`/
+  `pg_sleep_for()`/`pg_sleep_until()`, and
+  `pg_blocking_pids()`/`pg_lock_status()` were all
+  previously allowed for restricted sessions, since none
+  of them appeared on the old denylist. They read or hold
+  server-side state, or block the backend outright, none
+  of which a read-only session should be able to do. All
+  are now blocked, since none is on the new allow-list of
+  VOLATILE built-ins.
 - Cached plans were not discarded when a role was granted
   membership of a listed role. `GRANT <role> TO <role>`
   writes `pg_auth_members`, not `pg_authid`, so it missed

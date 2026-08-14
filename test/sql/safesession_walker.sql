@@ -10,7 +10,7 @@
 -- Function-detection tests for pgEdge SafeSession
 -- Blocked functions must be detected wherever they appear in a
 -- statement, not just in the top-level target list or WHERE clause. A
--- denylisted built-in (nextval) is placed in a range of plan positions;
+-- built-in that must be blocked (nextval) is placed in a range of plan positions;
 -- each must be rejected. Harmless functions, and volatile functions in
 -- trusted languages, must still be allowed.
 --
@@ -54,7 +54,7 @@ SET pgedge_safesession.roles = 'safesession_walk';
 -- Switch to the restricted role (changes the session user)
 SET SESSION AUTHORIZATION safesession_walk;
 
--- A denylisted built-in must be blocked wherever it appears:
+-- nextval must be blocked wherever it appears:
 
 -- target list
 SELECT nextval('walk_seq');
@@ -74,14 +74,25 @@ SELECT (SELECT nextval('walk_seq')) FROM test_walk;
 -- common table expression
 WITH c AS (SELECT nextval('walk_seq') AS n) SELECT n FROM c;
 
--- Other denylisted built-ins
+-- Other built-ins that must be blocked (absent from the allow-list)
 SELECT pg_advisory_lock(42);
 SELECT set_config('work_mem', '5MB', false);
+-- A volatile built-in that had no denylist entry before this
+-- change (only lo_import/lo_export were listed, not the rest of
+-- the large-object function family) must now be blocked too.
+SELECT lo_creat(-1);
+
+-- query_to_xml() executes a caller-supplied SQL string via SPI,
+-- bypassing the parse-time function walker for the nested query
+-- entirely — it must never be allow-listed regardless of how
+-- harmless it looks, unlike an ordinary read-only built-in.
+SELECT query_to_xml('SELECT 1', false, false, '');
 
 -- These must all be allowed:
 SELECT walk_vol(1);                 -- volatile, trusted language
 SELECT walk_imm(1);                 -- immutable
-SELECT random() < 2 AS ok;          -- volatile built-in, not denylisted
+SELECT random() < 2 AS ok;          -- volatile built-in, on the safe list
+SELECT pg_notify('safesession_walk_channel', 'payload'); -- volatile built-in, on the safe list (function form of NOTIFY)
 SELECT count(*) FROM test_walk;     -- built-in aggregate
 SELECT id FROM test_walk WHERE id = 2 ORDER BY id;
 
