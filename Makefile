@@ -17,7 +17,8 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_elevated safesession_plancache \
           safesession_coverage \
           safesession_views safesession_rls safesession_domains \
-          safesession_sequences
+          safesession_domainexec safesession_sequences \
+          safesession_xproto
 REGRESS_OPTS = --inputdir=test
 
 PG_CONFIG ?= pg_config

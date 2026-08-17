@@ -130,10 +130,7 @@ and this project adheres to
   tree and so was not examined either. Domain `CHECK` constraints
   reached via a coercion that appears in a query's parse tree,
   including as an `EXECUTE` statement's declared parameter type,
-  are now checked too; a domain constraint reached only through a
-  PL/pgSQL variable's declared type, or a SQL-language function's
-  return type, is not visible to this check and remains a known
-  limitation.
+  are now checked too.
 - Examining view bodies for blocked functions is a real behaviour
   change, not just a bug fix: a restricted role reading a view
   whose definition calls a side-effecting function in an untrusted
@@ -142,6 +139,22 @@ and this project adheres to
   rejected where it previously was not. This tightening is
   intentional, but worth knowing about if existing read-only
   monitoring queries are built as views.
+- A domain `CHECK` constraint could still run a blocked function
+  when the coercion that triggers it appeared in no query tree.
+  A parameter bound over the extended query protocol is coerced
+  in `exec_bind_message()` before the plan is fetched, which is
+  the normal path for JDBC, psycopg, node-postgres and npgsql;
+  neither a PL/pgSQL variable's declared type nor a function's
+  `RETURNS` type produces a `CoerceToDomain` node anywhere at
+  all. An object access hook now rejects a blocked function as
+  the executor compiles it, which happens before the constraint
+  is evaluated, so all of these are caught. The parameter need
+  not even be referenced by the query: declaring it is enough,
+  since the constraint runs as a side effect of coercion.
+- The fast-path function protocol (libpq's `PQfn`, which the
+  large-object client API is built on) reached none of the
+  hooks, so a restricted session could call any function
+  through it. The same object access hook now covers it.
 
 ## [1.0-alpha1] - Unreleased
 

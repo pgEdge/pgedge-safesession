@@ -157,9 +157,16 @@ the following operations are blocked:
   `EXPLAIN EXECUTE` and `CREATE TABLE AS ... EXECUTE`). A
   function reached only indirectly, through a view body, a
   row-level security policy's `USING`/`WITH CHECK` qual, or
-  a domain `CHECK` constraint (including one reached via a
-  prepared statement's declared parameter type), is
-  rejected the same way as a direct call.
+  a domain `CHECK` constraint, is rejected the same way as a
+  direct call. For a domain this holds however the coercion
+  that runs the constraint is reached: a cast, a prepared
+  statement's declared parameter type, a parameter bound
+  over the extended query protocol, a PL/pgSQL variable's
+  declared type, or a function's `RETURNS` type.
+- **Fast-path function calls**: the protocol behind libpq's
+  `PQfn`, which the large-object client API is built on. It
+  bypasses the parser and planner entirely, so the same
+  function policy is applied to it directly.
 - **Exclusive locks**: LOCK TABLE with modes above
   ROW SHARE
 - **GUC tampering**: any attempt to relax
@@ -310,14 +317,15 @@ with connection poolers.
 - SafeSession and Spock both install executor, utility, and
   planner hooks. They chain correctly, but if both are
   deployed the interaction has not been exhaustively tested.
-- A domain's `CHECK` constraint calling a blocked function is
-  only visible to this check when it is reached via a
-  coercion in a query's parse tree. A constraint reached only
-  through a PL/pgSQL variable's declared type, or a
-  SQL-language function's `RETURNS` type, is architecturally
-  invisible to a Query/Plan-tree walker and is not detected.
-  This is a permanent limitation, not a bug to be fixed
-  within this check's approach.
+- A blocked function is caught either when it appears in a
+  statement's parse tree or when the executor compiles it as
+  part of an expression. A function PostgreSQL calls directly
+  through `fmgr`, without compiling an expression around it,
+  is seen by neither: a type's own input and output
+  functions, and an index access method's support functions,
+  are the cases that arise in practice. Reaching one requires
+  a type or operator class that somebody else defined, since
+  a restricted role cannot create either.
 
 ## Example
 

@@ -20,6 +20,7 @@
 #include "access/table.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/objectaccess.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
@@ -69,6 +70,7 @@ static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 static planner_hook_type prev_planner_hook = NULL;
+static object_access_hook_type prev_object_access_hook = NULL;
 
 /* Function declarations */
 void _PG_init(void);
@@ -991,6 +993,46 @@ safesession_planner(Query *parse, const char *query_string,
 }
 
 /*
+ * object_access_hook: catch a blocked function that no query tree
+ * mentions.
+ *
+ * A domain's CHECK constraint runs during coercion, not during planning
+ * or execution of the statement that triggers it. For a parameter bound
+ * over the extended query protocol that coercion is in
+ * exec_bind_message(), which runs before the plan is fetched; for a
+ * PL/pgSQL variable's declared type or a function's RETURNS type there
+ * is no CoerceToDomain node in any statement to find. The Query-walking
+ * hooks see neither, and by the time either of them could run, the
+ * constraint has already fired.
+ *
+ * PostgreSQL compiles a constraint expression before evaluating it
+ * (domain_check_input -> prep_domain_constraints -> ExecInitExpr), and
+ * ExecInitFunc() invokes this hook for every function it compiles, so
+ * rejecting here still prevents the call rather than reporting it
+ * afterwards. It also covers the fast-path function protocol (PQfn),
+ * which reaches none of the other hooks.
+ *
+ * Chained first, so a co-installed extension still sees the access even
+ * when we go on to reject it.
+ */
+static void
+safesession_object_access(ObjectAccessType access, Oid classId,
+                          Oid objectId, int subId, void *arg)
+{
+    if (prev_object_access_hook)
+        prev_object_access_hook(access, classId, objectId, subId, arg);
+
+    if (access == OAT_FUNCTION_EXECUTE &&
+        safesession_block_c_functions &&
+        IsTransactionState() &&
+        current_role_is_restricted() &&
+        function_is_blocked(objectId, NULL))
+        safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                           "cannot execute functions that may have"
+                           " side effects in a read-only session");
+}
+
+/*
  * Does this SET ask for read-only to be turned on?
  *
  * A statement that asks for the state we already enforce agrees with the
@@ -1759,6 +1801,14 @@ _PG_init(void)
      */
     prev_planner_hook = planner_hook;
     planner_hook = safesession_planner;
+
+    /*
+     * Install object access hook (blocked function detection for a
+     * function no query tree mentions, such as one called from a domain
+     * CHECK constraint reached by a coercion rather than by a cast)
+     */
+    prev_object_access_hook = object_access_hook;
+    object_access_hook = safesession_object_access;
 
     /*
      * Invalidate the cached role-OID list when pg_authid changes (a role
