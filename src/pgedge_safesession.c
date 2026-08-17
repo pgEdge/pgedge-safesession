@@ -185,13 +185,13 @@ static bool query_has_blocked_function_walker(Node *node, void *context);
  * as SQL through the executor?
  *
  * SQL and the trusted procedural languages (PL/pgSQL, trusted PL/Perl,
- * ...) all have lanpltrusted set. Any write they perform, and any
- * dangerous function they call in turn, is caught downstream by the
- * executor hook and by this same post_parse_analyze check running again
- * on their inner statements, so their calls need not be blocked up front.
- * C, internal and untrusted PLs (plpython3u, plperlu, ...) can act
- * natively, outside anything we can observe, and are treated as
- * potentially side-effecting.
+ * ...) all have lanpltrusted set. A PL body goes through SPI, so its
+ * writes and dangerous calls are re-analysed and caught there. A SQL body
+ * is not always, because the planner may inline it, so
+ * function_is_blocked() checks it up front; see
+ * sql_function_body_is_blocked(). C, internal and untrusted PLs
+ * (plpython3u, plperlu, ...) can act natively, outside anything we can
+ * observe, and are treated as potentially side-effecting.
  */
 static bool
 language_is_trusted(Oid prolang)
@@ -337,6 +337,90 @@ aggregate_support_is_blocked(Oid aggfnoid)
  * check_functions_in_node().
  */
 /*
+ * The functions whose bodies are being walked on the current path.
+ *
+ * We record the path rather than counting depth. Re-entering a function
+ * that is already on it adds nothing, since the frame above is already
+ * walking that body, and stopping there ends a recursive or mutually
+ * recursive walk without giving up on a chain that is merely long. The
+ * fixed bound is a backstop against a path longer than any real one; it
+ * raises an error rather than reporting "not blocked", so nesting can
+ * never be used to slip a call past the check.
+ */
+#define SQL_BODY_MAX_DEPTH 64
+static Oid sql_body_path[SQL_BODY_MAX_DEPTH];
+static int sql_body_depth = 0;
+
+static bool
+funcid_on_current_path(Oid funcid)
+{
+    int i;
+
+    for (i = 0; i < sql_body_depth; i++)
+    {
+        if (sql_body_path[i] == funcid)
+            return true;
+    }
+    return false;
+}
+
+/*
+ * Does this function have a polymorphic argument or return type, i.e. one
+ * that is resolved from the call site rather than from the catalog?
+ */
+static bool
+function_is_polymorphic(HeapTuple proctup)
+{
+    Form_pg_proc procform = (Form_pg_proc) GETSTRUCT(proctup);
+    int          i;
+
+    if (IsPolymorphicType(procform->prorettype))
+        return true;
+
+    for (i = 0; i < procform->pronargs; i++)
+    {
+        if (IsPolymorphicType(procform->proargtypes.values[i]))
+            return true;
+    }
+
+    return false;
+}
+
+/*
+ * Scan a raw parse tree for a call to a denylisted built-in, by name.
+ *
+ * Used for a body we cannot analyse. A polymorphic argument type is only
+ * resolved from the call site, and this check has a function OID rather
+ * than a call expression to resolve it from, so parse analysis of such a
+ * body fails outright. Letting that error escape would make every
+ * polymorphic SQL function uncallable by a restricted role, so match on
+ * the names a raw tree does carry instead. That covers the denylisted
+ * built-ins, which are the calls the body check exists to catch, but not
+ * a volatile function in an untrusted language reached from such a body,
+ * which needs types to identify.
+ */
+static bool
+raw_body_calls_dangerous_builtin(Node *node, void *context)
+{
+    if (node == NULL)
+        return false;
+
+    check_stack_depth();
+
+    if (IsA(node, FuncCall))
+    {
+        FuncCall *fc = (FuncCall *) node;
+
+        if (fc->funcname != NIL &&
+            name_is_dangerous_builtin(strVal(llast(fc->funcname))))
+            return true;
+    }
+
+    return raw_expression_tree_walker(node, raw_body_calls_dangerous_builtin,
+                                      context);
+}
+
+/*
  * Does the body of a SQL-language function call something a restricted
  * session must not run?
  *
@@ -350,21 +434,33 @@ aggregate_support_is_blocked(Oid aggfnoid)
 static bool
 sql_function_body_is_blocked(Oid funcid)
 {
-    static int depth = 0;
     HeapTuple  proctup;
     Datum      tmp;
     bool       isnull;
     bool       result = false;
 
-    /* Bound the recursion, for a recursive or mutually recursive body */
-    if (depth >= 5)
+    /* Already being walked further up, so its body is covered there */
+    if (funcid_on_current_path(funcid))
         return false;
+
+    if (sql_body_depth >= SQL_BODY_MAX_DEPTH)
+    {
+        char *funcname = get_func_name(funcid);
+
+        ereport(ERROR,
+                (errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+                 errmsg("cannot verify the body of SQL function \"%s\" in"
+                        " a read-only session: nesting is too deep",
+                        funcname ? funcname : "?"),
+                 errhint("This session is restricted to read-only access"
+                         " by the pgedge_safesession extension.")));
+    }
 
     proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
     if (!HeapTupleIsValid(proctup))
         return false;
 
-    depth++;
+    sql_body_path[sql_body_depth++] = funcid;
     PG_TRY();
     {
         tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosqlbody,
@@ -378,34 +474,52 @@ sql_function_body_is_blocked(Oid funcid)
         }
         else
         {
-            /*
-             * An old-style body is plain text. Analyse it the way
-             * functions.c would, which also runs this hook again on each
-             * inner statement.
-             */
+            /* An old-style body is plain text, so parse it first */
             SQLFunctionParseInfoPtr pinfo;
             char       *prosrc;
             ListCell   *lc;
+            bool        polymorphic = function_is_polymorphic(proctup);
 
             tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosrc,
                                   &isnull);
             if (isnull)
                 elog(ERROR, "null prosrc for function %u", funcid);
             prosrc = TextDatumGetCString(tmp);
-            pinfo = prepare_sql_fn_parse_info(proctup, NULL, InvalidOid);
+
+            /*
+             * Parameters of a polymorphic function cannot be typed without
+             * the call site, so such a body is scanned by name rather than
+             * analysed (see raw_body_calls_dangerous_builtin).
+             */
+            pinfo = polymorphic ? NULL
+                : prepare_sql_fn_parse_info(proctup, NULL, InvalidOid);
 
             foreach(lc, pg_parse_query(prosrc))
             {
+                RawStmt  *raw = lfirst_node(RawStmt, lc);
                 List     *querytrees;
                 ListCell *lc2;
 
+                if (polymorphic)
+                {
+                    result = raw_body_calls_dangerous_builtin(raw->stmt,
+                                                              NULL);
+                    if (result)
+                        break;
+                    continue;
+                }
+
+                /*
+                 * Analyse the statement the way functions.c would, which
+                 * also runs this hook again on each inner statement.
+                 */
 #if PG_VERSION_NUM >= 150000
                 querytrees = pg_analyze_and_rewrite_withcb(
-                    lfirst_node(RawStmt, lc), prosrc,
+                    raw, prosrc,
                     (ParserSetupHook) sql_fn_parser_setup, pinfo, NULL);
 #else
                 querytrees = pg_analyze_and_rewrite_params(
-                    lfirst_node(RawStmt, lc), prosrc,
+                    raw, prosrc,
                     (ParserSetupHook) sql_fn_parser_setup, pinfo, NULL);
 #endif
                 foreach(lc2, querytrees)
@@ -424,7 +538,7 @@ sql_function_body_is_blocked(Oid funcid)
     }
     PG_FINALLY();
     {
-        depth--;
+        sql_body_depth--;
         ReleaseSysCache(proctup);
     }
     PG_END_TRY();

@@ -50,8 +50,35 @@ CREATE FUNCTION sb_recursive(int) RETURNS int LANGUAGE sql
     AS $$ SELECT CASE WHEN $1 <= 0 THEN 0
                       ELSE sb_recursive($1 - 1) END $$;
 
+-- A polymorphic body. Its parameter types come from the call site, which
+-- the body check cannot see, so it must neither error nor be blocked.
+CREATE FUNCTION sb_poly(anyelement) RETURNS anyelement LANGUAGE sql
+    AS $$ SELECT $1 $$;
+
+-- The same, hiding a denylisted built-in
+CREATE FUNCTION sb_poly_bad(anyelement) RETURNS anyelement LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '63MB', false), $1 $$;
+
+-- A chain longer than any single wrapper, to show that nesting does not
+-- exhaust the walk and let the call through
+CREATE FUNCTION sb_chain0() RETURNS text LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '64MB', false) $$;
+CREATE FUNCTION sb_chain1() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain0() $$;
+CREATE FUNCTION sb_chain2() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain1() $$;
+CREATE FUNCTION sb_chain3() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain2() $$;
+CREATE FUNCTION sb_chain4() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain3() $$;
+CREATE FUNCTION sb_chain5() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain4() $$;
+CREATE FUNCTION sb_chain6() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain5() $$;
+
 GRANT EXECUTE ON FUNCTION sb_text(), sb_atomic(), sb_nested(), sb_read(),
-    sb_recursive(int) TO safesession_sqlbody;
+    sb_recursive(int), sb_poly(anyelement), sb_poly_bad(anyelement),
+    sb_chain6() TO safesession_sqlbody;
 
 SET pgedge_safesession.roles = 'safesession_sqlbody';
 
@@ -69,6 +96,17 @@ SELECT sb_read() > 0 AS read_only_body_still_works;
 
 -- The recursion guard bounds the walk rather than looping
 SELECT sb_recursive(3) AS recursive_body_terminates;
+
+-- A polymorphic body is typed from the call site, which the check cannot
+-- see. It must still be callable, and still be checked by name.
+SELECT sb_poly(42) AS polymorphic_body_still_works;
+SELECT sb_poly_bad(42);
+SHOW work_mem;
+
+-- Depth does not exhaust the walk: the call at the end of the chain is
+-- still found
+SELECT sb_chain6();
+SHOW work_mem;
 
 RESET SESSION AUTHORIZATION;
 
@@ -91,5 +129,14 @@ DROP FUNCTION sb_atomic();
 DROP FUNCTION sb_nested();
 DROP FUNCTION sb_read();
 DROP FUNCTION sb_recursive(int);
+DROP FUNCTION sb_poly(anyelement);
+DROP FUNCTION sb_poly_bad(anyelement);
+DROP FUNCTION sb_chain6();
+DROP FUNCTION sb_chain5();
+DROP FUNCTION sb_chain4();
+DROP FUNCTION sb_chain3();
+DROP FUNCTION sb_chain2();
+DROP FUNCTION sb_chain1();
+DROP FUNCTION sb_chain0();
 DROP ROLE safesession_sqlbody;
 DROP EXTENSION pgedge_safesession;

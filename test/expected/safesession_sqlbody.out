@@ -42,8 +42,32 @@ CREATE FUNCTION sb_read() RETURNS bigint LANGUAGE sql
 CREATE FUNCTION sb_recursive(int) RETURNS int LANGUAGE sql
     AS $$ SELECT CASE WHEN $1 <= 0 THEN 0
                       ELSE sb_recursive($1 - 1) END $$;
+-- A polymorphic body. Its parameter types come from the call site, which
+-- the body check cannot see, so it must neither error nor be blocked.
+CREATE FUNCTION sb_poly(anyelement) RETURNS anyelement LANGUAGE sql
+    AS $$ SELECT $1 $$;
+-- The same, hiding a denylisted built-in
+CREATE FUNCTION sb_poly_bad(anyelement) RETURNS anyelement LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '63MB', false), $1 $$;
+-- A chain longer than any single wrapper, to show that nesting does not
+-- exhaust the walk and let the call through
+CREATE FUNCTION sb_chain0() RETURNS text LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '64MB', false) $$;
+CREATE FUNCTION sb_chain1() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain0() $$;
+CREATE FUNCTION sb_chain2() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain1() $$;
+CREATE FUNCTION sb_chain3() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain2() $$;
+CREATE FUNCTION sb_chain4() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain3() $$;
+CREATE FUNCTION sb_chain5() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain4() $$;
+CREATE FUNCTION sb_chain6() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain5() $$;
 GRANT EXECUTE ON FUNCTION sb_text(), sb_atomic(), sb_nested(), sb_read(),
-    sb_recursive(int) TO safesession_sqlbody;
+    sb_recursive(int), sb_poly(anyelement), sb_poly_bad(anyelement),
+    sb_chain6() TO safesession_sqlbody;
 SET pgedge_safesession.roles = 'safesession_sqlbody';
 SET SESSION AUTHORIZATION safesession_sqlbody;
 SET work_mem = '4MB';
@@ -77,6 +101,34 @@ SELECT sb_recursive(3) AS recursive_body_terminates;
                          0
 (1 row)
 
+-- A polymorphic body is typed from the call site, which the check cannot
+-- see. It must still be callable, and still be checked by name.
+SELECT sb_poly(42) AS polymorphic_body_still_works;
+ polymorphic_body_still_works 
+------------------------------
+                           42
+(1 row)
+
+SELECT sb_poly_bad(42);
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+-- Depth does not exhaust the walk: the call at the end of the chain is
+-- still found
+SELECT sb_chain6();
+ERROR:  cannot execute functions that may have side effects in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
 RESET SESSION AUTHORIZATION;
 -- With block_c_functions off the body check is skipped too, as everywhere
 -- else
@@ -106,5 +158,14 @@ DROP FUNCTION sb_atomic();
 DROP FUNCTION sb_nested();
 DROP FUNCTION sb_read();
 DROP FUNCTION sb_recursive(int);
+DROP FUNCTION sb_poly(anyelement);
+DROP FUNCTION sb_poly_bad(anyelement);
+DROP FUNCTION sb_chain6();
+DROP FUNCTION sb_chain5();
+DROP FUNCTION sb_chain4();
+DROP FUNCTION sb_chain3();
+DROP FUNCTION sb_chain2();
+DROP FUNCTION sb_chain1();
+DROP FUNCTION sb_chain0();
 DROP ROLE safesession_sqlbody;
 DROP EXTENSION pgedge_safesession;
