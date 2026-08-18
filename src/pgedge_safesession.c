@@ -179,6 +179,42 @@ name_is_safe_volatile_builtin(const char *proname)
     return false;
 }
 
+/*
+ * Built-in functions whose declared volatility understates what they do.
+ *
+ * PostgreSQL declares both of these STABLE, so the volatility rule in
+ * function_is_blocked() never reaches them, but calling either one forces
+ * the transaction to take a real transaction ID. A read-only transaction
+ * permits that, so a restricted session could consume transaction IDs and
+ * add wraparound pressure.
+ *
+ * The pg_current_xact_id_if_assigned() and txid_current_if_assigned()
+ * forms only report an ID already handed out, assign nothing, and are
+ * deliberately absent from this list.
+ *
+ * This is not a return to blocking built-ins by name: volatility still
+ * decides every other built-in. It is the same kind of exception as
+ * aggregate_support_is_blocked() below, for a side effect the catalog's
+ * own labelling does not describe.
+ */
+static const char *const unsafe_nonvolatile_builtins[] = {
+    "pg_current_xact_id",
+    "txid_current",
+};
+
+static bool
+name_is_unsafe_nonvolatile_builtin(const char *proname)
+{
+    int i;
+
+    for (i = 0; i < lengthof(unsafe_nonvolatile_builtins); i++)
+    {
+        if (strcmp(proname, unsafe_nonvolatile_builtins[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
 static bool function_is_blocked(Oid funcid, void *context);
 static bool query_has_blocked_function_walker(Node *node, void *context);
 
@@ -622,8 +658,9 @@ function_is_blocked(Oid funcid, void *context)
     if (safesession_block_all_c_functions && prolang == ClanguageId)
         result = true;
     else if (is_builtin)
-        result = (provolatile == PROVOLATILE_VOLATILE) &&
-                 !name_is_safe_volatile_builtin(NameStr(proname));
+        result = name_is_unsafe_nonvolatile_builtin(NameStr(proname)) ||
+                 ((provolatile == PROVOLATILE_VOLATILE) &&
+                  !name_is_safe_volatile_builtin(NameStr(proname)));
     else
         result = (provolatile == PROVOLATILE_VOLATILE) &&
                  !language_is_trusted(prolang);
