@@ -10,9 +10,9 @@
 --
 -- A SQL function is written in a trusted language, so the language test
 -- alone lets it through on the grounds that its body is caught downstream.
--- That holds for writes, which reach the executor, but not for the
--- denylisted built-ins, which exist on the list precisely because they
--- escape it. The body is not always re-analysed at call time either: the
+-- That holds for writes, which reach the executor, but not for a built-in
+-- off the safe-VOLATILE allow-list, which is blocked precisely because it
+-- escapes it. The body is not always re-analysed at call time either: the
 -- planner inlines a simple SQL function rather than running it through
 -- functions.c. Both spellings of the body have to be looked into.
 --
@@ -46,9 +46,16 @@ CREATE FUNCTION sb_recursive(int) RETURNS int LANGUAGE sql
 -- the body check cannot see, so it must neither error nor be blocked.
 CREATE FUNCTION sb_poly(anyelement) RETURNS anyelement LANGUAGE sql
     AS $$ SELECT $1 $$;
--- The same, hiding a denylisted built-in
+-- The same, hiding a blocked built-in
 CREATE FUNCTION sb_poly_bad(anyelement) RETURNS anyelement LANGUAGE sql
     AS $$ SELECT set_config('work_mem', '63MB', false), $1 $$;
+-- A polymorphic body that does call built-ins, all of them allowed: one
+-- IMMUTABLE, one STABLE, one VOLATILE but on the safe list. A body checked
+-- by bare name has only the catalog to tell those apart from set_config(),
+-- so this is what keeps the name check from blocking every such body.
+CREATE FUNCTION sb_poly_ok(anyelement) RETURNS text LANGUAGE sql
+    AS $$ SELECT length(($1)::text) || current_schema() ||
+                 (random() >= 0)::text $$;
 -- A chain longer than any single wrapper, to show that nesting does not
 -- exhaust the walk and let the call through
 CREATE FUNCTION sb_chain0() RETURNS text LANGUAGE sql
@@ -67,7 +74,7 @@ CREATE FUNCTION sb_chain6() RETURNS text LANGUAGE sql
     AS $$ SELECT sb_chain5() $$;
 GRANT EXECUTE ON FUNCTION sb_text(), sb_atomic(), sb_nested(), sb_read(),
     sb_recursive(int), sb_poly(anyelement), sb_poly_bad(anyelement),
-    sb_chain6() TO safesession_sqlbody;
+    sb_poly_ok(anyelement), sb_chain6() TO safesession_sqlbody;
 SET pgedge_safesession.roles = 'safesession_sqlbody';
 SET SESSION AUTHORIZATION safesession_sqlbody;
 SET work_mem = '4MB';
@@ -118,6 +125,13 @@ SHOW work_mem;
  4MB
 (1 row)
 
+-- Allowed built-ins in such a body are not blocked along with it
+SELECT sb_poly_ok(42) IS NOT NULL AS allowed_builtins_by_name_still_work;
+ allowed_builtins_by_name_still_work 
+-------------------------------------
+ t
+(1 row)
+
 -- Depth does not exhaust the walk: the call at the end of the chain is
 -- still found
 SELECT sb_chain6();
@@ -160,6 +174,7 @@ DROP FUNCTION sb_read();
 DROP FUNCTION sb_recursive(int);
 DROP FUNCTION sb_poly(anyelement);
 DROP FUNCTION sb_poly_bad(anyelement);
+DROP FUNCTION sb_poly_ok(anyelement);
 DROP FUNCTION sb_chain6();
 DROP FUNCTION sb_chain5();
 DROP FUNCTION sb_chain4();

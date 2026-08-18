@@ -24,6 +24,7 @@
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -49,6 +50,7 @@
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/catcache.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
@@ -387,20 +389,66 @@ function_is_polymorphic(HeapTuple proctup)
 }
 
 /*
- * Scan a raw parse tree for a call to a denylisted built-in, by name.
+ * Would any built-in of this name be blocked?
+ *
+ * A raw parse tree names the function it calls but carries no OID, so the
+ * volatility and language that decide the question have to come from the
+ * catalog. Look the name up among the built-ins and ask the same
+ * function_is_blocked() every other path asks, so one built-in rule
+ * governs both, rather than a second copy of it here that a change to the
+ * allow-list would leave behind.
+ *
+ * The lookup is by bare name in pg_catalog, ignoring any schema
+ * qualification and every overload's argument types: a raw tree cannot be
+ * resolved to one overload without the types this path does not have.
+ * That errs towards blocking, which is the safe direction, and it only
+ * bites where a name that a built-in also carries is spelled in a body
+ * whose types cannot be resolved.
+ */
+static bool
+builtin_name_is_blocked(const char *proname)
+{
+    CatCList *catlist;
+    int       i;
+    bool      result = false;
+
+    catlist = SearchSysCacheList1(PROCNAMEARGSNSP, CStringGetDatum(proname));
+
+    for (i = 0; i < catlist->n_members; i++)
+    {
+        HeapTuple    proctup = &catlist->members[i]->tuple;
+        Form_pg_proc procform = (Form_pg_proc) GETSTRUCT(proctup);
+
+        if (procform->pronamespace != PG_CATALOG_NAMESPACE)
+            continue;
+
+        if (function_is_blocked(procform->oid, NULL))
+        {
+            result = true;
+            break;
+        }
+    }
+
+    ReleaseSysCacheList(catlist);
+
+    return result;
+}
+
+/*
+ * Scan a raw parse tree for a call to a blocked built-in, by name.
  *
  * Used for a body we cannot analyse. A polymorphic argument type is only
  * resolved from the call site, and this check has a function OID rather
  * than a call expression to resolve it from, so parse analysis of such a
  * body fails outright. Letting that error escape would make every
  * polymorphic SQL function uncallable by a restricted role, so match on
- * the names a raw tree does carry instead. That covers the denylisted
- * built-ins, which are the calls the body check exists to catch, but not
- * a volatile function in an untrusted language reached from such a body,
- * which needs types to identify.
+ * the names a raw tree does carry instead. That covers the built-ins,
+ * which are the calls the body check exists to catch, but not a volatile
+ * function in an untrusted language reached from such a body, which needs
+ * types to identify.
  */
 static bool
-raw_body_calls_dangerous_builtin(Node *node, void *context)
+raw_body_calls_blocked_builtin(Node *node, void *context)
 {
     if (node == NULL)
         return false;
@@ -412,11 +460,11 @@ raw_body_calls_dangerous_builtin(Node *node, void *context)
         FuncCall *fc = (FuncCall *) node;
 
         if (fc->funcname != NIL &&
-            name_is_dangerous_builtin(strVal(llast(fc->funcname))))
+            builtin_name_is_blocked(strVal(llast(fc->funcname))))
             return true;
     }
 
-    return raw_expression_tree_walker(node, raw_body_calls_dangerous_builtin,
+    return raw_expression_tree_walker(node, raw_body_calls_blocked_builtin,
                                       context);
 }
 
@@ -426,10 +474,11 @@ raw_body_calls_dangerous_builtin(Node *node, void *context)
  *
  * A SQL function passes the language test below, on the grounds that its
  * body is caught downstream. That holds for writes, which reach the
- * executor, but not for the denylisted built-ins, whose whole point is that
- * they escape it. Nor is the body always re-analysed on the way through:
- * the planner inlines a simple SQL function instead of running it through
- * functions.c, and inlining happens after this check. So look inside.
+ * executor, but not for a built-in off the safe-VOLATILE allow-list, which
+ * is blocked precisely because it escapes the executor. Nor is the body
+ * always re-analysed on the way through: the planner inlines a simple SQL
+ * function instead of running it through functions.c, and inlining happens
+ * after this check. So look inside.
  */
 static bool
 sql_function_body_is_blocked(Oid funcid)
@@ -489,7 +538,7 @@ sql_function_body_is_blocked(Oid funcid)
             /*
              * Parameters of a polymorphic function cannot be typed without
              * the call site, so such a body is scanned by name rather than
-             * analysed (see raw_body_calls_dangerous_builtin).
+             * analysed (see raw_body_calls_blocked_builtin).
              */
             pinfo = polymorphic ? NULL
                 : prepare_sql_fn_parse_info(proctup, NULL, InvalidOid);
@@ -502,8 +551,8 @@ sql_function_body_is_blocked(Oid funcid)
 
                 if (polymorphic)
                 {
-                    result = raw_body_calls_dangerous_builtin(raw->stmt,
-                                                              NULL);
+                    result = raw_body_calls_blocked_builtin(raw->stmt,
+                                                            NULL);
                     if (result)
                         break;
                     continue;
