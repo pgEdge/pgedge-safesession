@@ -1,0 +1,154 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
+-- SQL function body tests for pgEdge SafeSession
+--
+-- A SQL function is written in a trusted language, so the language test
+-- alone lets it through on the grounds that its body is caught downstream.
+-- That holds for writes, which reach the executor, but not for a built-in
+-- off the safe-VOLATILE allow-list, which is blocked precisely because it
+-- escapes it. The body is not always re-analysed at call time either: the
+-- planner inlines a simple SQL function rather than running it through
+-- functions.c. Both spellings of the body have to be looked into.
+--
+-- set_config() is the marker throughout, because it escapes the read-only
+-- floor; SHOW work_mem shows whether a call took effect.
+
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP ROLE IF EXISTS safesession_sqlbody;
+
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+
+CREATE ROLE safesession_sqlbody LOGIN;
+
+-- Old-style text body, and the standard BEGIN ATOMIC body
+CREATE FUNCTION sb_text() RETURNS text LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '61MB', false) $$;
+CREATE FUNCTION sb_atomic() RETURNS text LANGUAGE sql
+    BEGIN ATOMIC;
+        SELECT set_config('work_mem', '62MB', false);
+    END;
+
+-- One SQL function wrapping another
+CREATE FUNCTION sb_nested() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_text() $$;
+
+-- A harmless read-only body, which must keep working
+CREATE FUNCTION sb_read() RETURNS bigint LANGUAGE sql
+    AS $$ SELECT count(*) FROM pg_class $$;
+
+-- A recursive body, to show the recursion guard terminates
+CREATE FUNCTION sb_recursive(int) RETURNS int LANGUAGE sql
+    AS $$ SELECT CASE WHEN $1 <= 0 THEN 0
+                      ELSE sb_recursive($1 - 1) END $$;
+
+-- A polymorphic body. Its parameter types come from the call site, which
+-- the body check cannot see, so it must neither error nor be blocked.
+CREATE FUNCTION sb_poly(anyelement) RETURNS anyelement LANGUAGE sql
+    AS $$ SELECT $1 $$;
+
+-- The same, hiding a blocked built-in
+CREATE FUNCTION sb_poly_bad(anyelement) RETURNS anyelement LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '63MB', false), $1 $$;
+
+-- A polymorphic body that does call built-ins, all of them allowed: one
+-- IMMUTABLE, one STABLE, one VOLATILE but on the safe list. A body checked
+-- by bare name has only the catalog to tell those apart from set_config(),
+-- so this is what keeps the name check from blocking every such body.
+CREATE FUNCTION sb_poly_ok(anyelement) RETURNS text LANGUAGE sql
+    AS $$ SELECT length(($1)::text) || current_schema() ||
+                 (random() >= 0)::text $$;
+
+-- A chain longer than any single wrapper, to show that nesting does not
+-- exhaust the walk and let the call through
+CREATE FUNCTION sb_chain0() RETURNS text LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '64MB', false) $$;
+CREATE FUNCTION sb_chain1() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain0() $$;
+CREATE FUNCTION sb_chain2() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain1() $$;
+CREATE FUNCTION sb_chain3() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain2() $$;
+CREATE FUNCTION sb_chain4() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain3() $$;
+CREATE FUNCTION sb_chain5() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain4() $$;
+CREATE FUNCTION sb_chain6() RETURNS text LANGUAGE sql
+    AS $$ SELECT sb_chain5() $$;
+
+GRANT EXECUTE ON FUNCTION sb_text(), sb_atomic(), sb_nested(), sb_read(),
+    sb_recursive(int), sb_poly(anyelement), sb_poly_bad(anyelement),
+    sb_poly_ok(anyelement), sb_chain6() TO safesession_sqlbody;
+
+SET pgedge_safesession.roles = 'safesession_sqlbody';
+
+SET SESSION AUTHORIZATION safesession_sqlbody;
+SET work_mem = '4MB';
+
+-- Both spellings must be rejected, and through one level of nesting
+SELECT sb_text();
+SELECT sb_atomic();
+SELECT sb_nested();
+SHOW work_mem;
+
+-- A read-only SQL function is unaffected
+SELECT sb_read() > 0 AS read_only_body_still_works;
+
+-- The recursion guard bounds the walk rather than looping
+SELECT sb_recursive(3) AS recursive_body_terminates;
+
+-- A polymorphic body is typed from the call site, which the check cannot
+-- see. It must still be callable, and still be checked by name.
+SELECT sb_poly(42) AS polymorphic_body_still_works;
+SELECT sb_poly_bad(42);
+SHOW work_mem;
+
+-- Allowed built-ins in such a body are not blocked along with it
+SELECT sb_poly_ok(42) IS NOT NULL AS allowed_builtins_by_name_still_work;
+
+-- Depth does not exhaust the walk: the call at the end of the chain is
+-- still found
+SELECT sb_chain6();
+SHOW work_mem;
+
+RESET SESSION AUTHORIZATION;
+
+-- With block_c_functions off the body check is skipped too, as everywhere
+-- else
+SET pgedge_safesession.block_c_functions = off;
+SET SESSION AUTHORIZATION safesession_sqlbody;
+SELECT sb_text();
+SHOW work_mem;
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.block_c_functions = on;
+
+-- Cleanup
+SET default_transaction_read_only = off;
+RESET pgedge_safesession.roles;
+RESET pgedge_safesession.block_c_functions;
+RESET work_mem;
+DROP FUNCTION sb_text();
+DROP FUNCTION sb_atomic();
+DROP FUNCTION sb_nested();
+DROP FUNCTION sb_read();
+DROP FUNCTION sb_recursive(int);
+DROP FUNCTION sb_poly(anyelement);
+DROP FUNCTION sb_poly_bad(anyelement);
+DROP FUNCTION sb_poly_ok(anyelement);
+DROP FUNCTION sb_chain6();
+DROP FUNCTION sb_chain5();
+DROP FUNCTION sb_chain4();
+DROP FUNCTION sb_chain3();
+DROP FUNCTION sb_chain2();
+DROP FUNCTION sb_chain1();
+DROP FUNCTION sb_chain0();
+DROP ROLE safesession_sqlbody;
+DROP EXTENSION pgedge_safesession;

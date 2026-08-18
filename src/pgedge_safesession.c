@@ -24,6 +24,7 @@
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -33,6 +34,7 @@
 #endif
 #include "commands/prepare.h"
 #include "executor/executor.h"
+#include "executor/functions.h"
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -44,9 +46,11 @@
 #include "parser/parse_expr.h"
 #include "parser/parse_node.h"
 #include "tcop/cmdtag.h"
+#include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/catcache.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
@@ -175,6 +179,42 @@ name_is_safe_volatile_builtin(const char *proname)
     return false;
 }
 
+/*
+ * Built-in functions whose declared volatility understates what they do.
+ *
+ * PostgreSQL declares both of these STABLE, so the volatility rule in
+ * function_is_blocked() never reaches them, but calling either one forces
+ * the transaction to take a real transaction ID. A read-only transaction
+ * permits that, so a restricted session could consume transaction IDs and
+ * add wraparound pressure.
+ *
+ * The pg_current_xact_id_if_assigned() and txid_current_if_assigned()
+ * forms only report an ID already handed out, assign nothing, and are
+ * deliberately absent from this list.
+ *
+ * This is not a return to blocking built-ins by name: volatility still
+ * decides every other built-in. It is the same kind of exception as
+ * aggregate_support_is_blocked() below, for a side effect the catalog's
+ * own labelling does not describe.
+ */
+static const char *const unsafe_nonvolatile_builtins[] = {
+    "pg_current_xact_id",
+    "txid_current",
+};
+
+static bool
+name_is_unsafe_nonvolatile_builtin(const char *proname)
+{
+    int i;
+
+    for (i = 0; i < lengthof(unsafe_nonvolatile_builtins); i++)
+    {
+        if (strcmp(proname, unsafe_nonvolatile_builtins[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
 static bool function_is_blocked(Oid funcid, void *context);
 static bool query_has_blocked_function_walker(Node *node, void *context);
 
@@ -183,13 +223,13 @@ static bool query_has_blocked_function_walker(Node *node, void *context);
  * as SQL through the executor?
  *
  * SQL and the trusted procedural languages (PL/pgSQL, trusted PL/Perl,
- * ...) all have lanpltrusted set. Any write they perform, and any
- * dangerous function they call in turn, is caught downstream by the
- * executor hook and by this same post_parse_analyze check running again
- * on their inner statements, so their calls need not be blocked up front.
- * C, internal and untrusted PLs (plpython3u, plperlu, ...) can act
- * natively, outside anything we can observe, and are treated as
- * potentially side-effecting.
+ * ...) all have lanpltrusted set. A PL body goes through SPI, so its
+ * writes and dangerous calls are re-analysed and caught there. A SQL body
+ * is not always, because the planner may inline it, so
+ * function_is_blocked() checks it up front; see
+ * sql_function_body_is_blocked(). C, internal and untrusted PLs
+ * (plpython3u, plperlu, ...) can act natively, outside anything we can
+ * observe, and are treated as potentially side-effecting.
  */
 static bool
 language_is_trusted(Oid prolang)
@@ -334,6 +374,263 @@ aggregate_support_is_blocked(Oid aggfnoid)
  * The signature matches check_function_callback so this can be handed to
  * check_functions_in_node().
  */
+/*
+ * The functions whose bodies are being walked on the current path.
+ *
+ * We record the path rather than counting depth. Re-entering a function
+ * that is already on it adds nothing, since the frame above is already
+ * walking that body, and stopping there ends a recursive or mutually
+ * recursive walk without giving up on a chain that is merely long. The
+ * fixed bound is a backstop against a path longer than any real one; it
+ * raises an error rather than reporting "not blocked", so nesting can
+ * never be used to slip a call past the check.
+ */
+#define SQL_BODY_MAX_DEPTH 64
+static Oid sql_body_path[SQL_BODY_MAX_DEPTH];
+static int sql_body_depth = 0;
+
+static bool
+funcid_on_current_path(Oid funcid)
+{
+    int i;
+
+    for (i = 0; i < sql_body_depth; i++)
+    {
+        if (sql_body_path[i] == funcid)
+            return true;
+    }
+    return false;
+}
+
+/*
+ * Does this function have a polymorphic argument or return type, i.e. one
+ * that is resolved from the call site rather than from the catalog?
+ */
+static bool
+function_is_polymorphic(HeapTuple proctup)
+{
+    Form_pg_proc procform = (Form_pg_proc) GETSTRUCT(proctup);
+    int          i;
+
+    if (IsPolymorphicType(procform->prorettype))
+        return true;
+
+    for (i = 0; i < procform->pronargs; i++)
+    {
+        if (IsPolymorphicType(procform->proargtypes.values[i]))
+            return true;
+    }
+
+    return false;
+}
+
+/*
+ * Would any built-in of this name be blocked?
+ *
+ * A raw parse tree names the function it calls but carries no OID, so the
+ * volatility and language that decide the question have to come from the
+ * catalog. Look the name up among the built-ins and ask the same
+ * function_is_blocked() every other path asks, so one built-in rule
+ * governs both, rather than a second copy of it here that a change to the
+ * allow-list would leave behind.
+ *
+ * The lookup is by bare name in pg_catalog, ignoring any schema
+ * qualification and every overload's argument types: a raw tree cannot be
+ * resolved to one overload without the types this path does not have.
+ * That errs towards blocking, which is the safe direction, and it only
+ * bites where a name that a built-in also carries is spelled in a body
+ * whose types cannot be resolved.
+ */
+static bool
+builtin_name_is_blocked(const char *proname)
+{
+    CatCList *catlist;
+    int       i;
+    bool      result = false;
+
+    catlist = SearchSysCacheList1(PROCNAMEARGSNSP, CStringGetDatum(proname));
+
+    for (i = 0; i < catlist->n_members; i++)
+    {
+        HeapTuple    proctup = &catlist->members[i]->tuple;
+        Form_pg_proc procform = (Form_pg_proc) GETSTRUCT(proctup);
+
+        if (procform->pronamespace != PG_CATALOG_NAMESPACE)
+            continue;
+
+        if (function_is_blocked(procform->oid, NULL))
+        {
+            result = true;
+            break;
+        }
+    }
+
+    ReleaseSysCacheList(catlist);
+
+    return result;
+}
+
+/*
+ * Scan a raw parse tree for a call to a blocked built-in, by name.
+ *
+ * Used for a body we cannot analyse. A polymorphic argument type is only
+ * resolved from the call site, and this check has a function OID rather
+ * than a call expression to resolve it from, so parse analysis of such a
+ * body fails outright. Letting that error escape would make every
+ * polymorphic SQL function uncallable by a restricted role, so match on
+ * the names a raw tree does carry instead. That covers the built-ins,
+ * which are the calls the body check exists to catch, but not a volatile
+ * function in an untrusted language reached from such a body, which needs
+ * types to identify.
+ */
+static bool
+raw_body_calls_blocked_builtin(Node *node, void *context)
+{
+    if (node == NULL)
+        return false;
+
+    check_stack_depth();
+
+    if (IsA(node, FuncCall))
+    {
+        FuncCall *fc = (FuncCall *) node;
+
+        if (fc->funcname != NIL &&
+            builtin_name_is_blocked(strVal(llast(fc->funcname))))
+            return true;
+    }
+
+    return raw_expression_tree_walker(node, raw_body_calls_blocked_builtin,
+                                      context);
+}
+
+/*
+ * Does the body of a SQL-language function call something a restricted
+ * session must not run?
+ *
+ * A SQL function passes the language test below, on the grounds that its
+ * body is caught downstream. That holds for writes, which reach the
+ * executor, but not for a built-in off the safe-VOLATILE allow-list, which
+ * is blocked precisely because it escapes the executor. Nor is the body
+ * always re-analysed on the way through: the planner inlines a simple SQL
+ * function instead of running it through functions.c, and inlining happens
+ * after this check. So look inside.
+ */
+static bool
+sql_function_body_is_blocked(Oid funcid)
+{
+    HeapTuple  proctup;
+    Datum      tmp;
+    bool       isnull;
+    bool       result = false;
+
+    /* Already being walked further up, so its body is covered there */
+    if (funcid_on_current_path(funcid))
+        return false;
+
+    if (sql_body_depth >= SQL_BODY_MAX_DEPTH)
+    {
+        char *funcname = get_func_name(funcid);
+
+        ereport(ERROR,
+                (errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+                 errmsg("cannot verify the body of SQL function \"%s\" in"
+                        " a read-only session: nesting is too deep",
+                        funcname ? funcname : "?"),
+                 errhint("This session is restricted to read-only access"
+                         " by the pgedge_safesession extension.")));
+    }
+
+    proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+    if (!HeapTupleIsValid(proctup))
+        return false;
+
+    sql_body_path[sql_body_depth++] = funcid;
+    PG_TRY();
+    {
+        tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosqlbody,
+                              &isnull);
+        if (!isnull)
+        {
+            /* A standard-body (BEGIN ATOMIC) function is stored analysed */
+            Node *body = (Node *) stringToNode(TextDatumGetCString(tmp));
+
+            result = query_has_blocked_function_walker(body, NULL);
+        }
+        else
+        {
+            /* An old-style body is plain text, so parse it first */
+            SQLFunctionParseInfoPtr pinfo;
+            char       *prosrc;
+            ListCell   *lc;
+            bool        polymorphic = function_is_polymorphic(proctup);
+
+            tmp = SysCacheGetAttr(PROCOID, proctup, Anum_pg_proc_prosrc,
+                                  &isnull);
+            if (isnull)
+                elog(ERROR, "null prosrc for function %u", funcid);
+            prosrc = TextDatumGetCString(tmp);
+
+            /*
+             * Parameters of a polymorphic function cannot be typed without
+             * the call site, so such a body is scanned by name rather than
+             * analysed (see raw_body_calls_blocked_builtin).
+             */
+            pinfo = polymorphic ? NULL
+                : prepare_sql_fn_parse_info(proctup, NULL, InvalidOid);
+
+            foreach(lc, pg_parse_query(prosrc))
+            {
+                RawStmt  *raw = lfirst_node(RawStmt, lc);
+                List     *querytrees;
+                ListCell *lc2;
+
+                if (polymorphic)
+                {
+                    result = raw_body_calls_blocked_builtin(raw->stmt,
+                                                            NULL);
+                    if (result)
+                        break;
+                    continue;
+                }
+
+                /*
+                 * Analyse the statement the way functions.c would, which
+                 * also runs this hook again on each inner statement.
+                 */
+#if PG_VERSION_NUM >= 150000
+                querytrees = pg_analyze_and_rewrite_withcb(
+                    raw, prosrc,
+                    (ParserSetupHook) sql_fn_parser_setup, pinfo, NULL);
+#else
+                querytrees = pg_analyze_and_rewrite_params(
+                    raw, prosrc,
+                    (ParserSetupHook) sql_fn_parser_setup, pinfo, NULL);
+#endif
+                foreach(lc2, querytrees)
+                {
+                    if (query_has_blocked_function_walker(
+                            (Node *) lfirst(lc2), NULL))
+                    {
+                        result = true;
+                        break;
+                    }
+                }
+                if (result)
+                    break;
+            }
+        }
+    }
+    PG_FINALLY();
+    {
+        sql_body_depth--;
+        ReleaseSysCache(proctup);
+    }
+    PG_END_TRY();
+
+    return result;
+}
+
 static bool
 function_is_blocked(Oid funcid, void *context)
 {
@@ -361,8 +658,9 @@ function_is_blocked(Oid funcid, void *context)
     if (safesession_block_all_c_functions && prolang == ClanguageId)
         result = true;
     else if (is_builtin)
-        result = (provolatile == PROVOLATILE_VOLATILE) &&
-                 !name_is_safe_volatile_builtin(NameStr(proname));
+        result = name_is_unsafe_nonvolatile_builtin(NameStr(proname)) ||
+                 ((provolatile == PROVOLATILE_VOLATILE) &&
+                  !name_is_safe_volatile_builtin(NameStr(proname)));
     else
         result = (provolatile == PROVOLATILE_VOLATILE) &&
                  !language_is_trusted(prolang);
@@ -373,6 +671,11 @@ function_is_blocked(Oid funcid, void *context)
      */
     if (!result && prokind == PROKIND_AGGREGATE)
         result = aggregate_support_is_blocked(funcid);
+
+    /* A SQL function is judged by its body as well as by its language */
+    if (!result && !is_builtin && prolang == SQLlanguageId &&
+        prokind == PROKIND_FUNCTION)
+        result = sql_function_body_is_blocked(funcid);
 
     return result;
 }
