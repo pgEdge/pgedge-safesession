@@ -29,10 +29,18 @@ for restricted roles.
 - Supports PostgreSQL 14+
 
 ## Quick Start
+Clone the repository:
+```bash
+git clone https://github.com/pgEdge/pgedge-safesession
+cd pgedge-safesession/
+```
 
 Build and install:
 
+You can also compile and install the extension from the source code, with the same guidelines as any other Postgres extension constructed using PGXS. Make sure that your PATH environment variable includes the directory where pg_config (under your Postgres installation) is located.
+
 ```bash
+export PATH=/usr/pgsql-18/bin:$PATH
 make
 sudo make install
 ```
