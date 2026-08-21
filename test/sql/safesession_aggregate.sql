@@ -1,0 +1,118 @@
+-------------------------------------------------------------------------
+--
+-- pgEdge SafeSession
+--
+-- Copyright (c) 2025 - 2026, pgEdge, Inc.
+-- This software is released under The PostgreSQL License
+--
+-------------------------------------------------------------------------
+
+-- Aggregate support-function tests for pgEdge SafeSession
+--
+-- An aggregate carries its own volatility in pg_proc, and CREATE
+-- AGGREGATE records IMMUTABLE there whatever its support functions do, so
+-- the volatility rule that governs every other function never rejects an
+-- aggregate. A query references only the aggregate, so checking that OID
+-- alone would let a VOLATILE transition or final function run unnoticed;
+-- the support functions have to be expanded and checked individually.
+--
+-- set_config() is the marker, as elsewhere in the suite: it escapes the
+-- read-only floor, so SHOW work_mem says whether a call took effect.
+
+-- Setup: clean any stale state
+RESET SESSION AUTHORIZATION;
+SET default_transaction_read_only = off;
+DROP ROLE IF EXISTS safesession_agg;
+
+CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
+
+CREATE ROLE safesession_agg LOGIN;
+
+-- A blocked VOLATILE built-in as the transition function. The initial
+-- condition names the setting, so the single transition below applies the
+-- value it is given.
+CREATE AGGREGATE agg_bad_trans(text, boolean) (
+    SFUNC = set_config,
+    STYPE = text,
+    INITCOND = 'work_mem'
+);
+
+-- The same by way of the final function, which is a separate branch of
+-- the support-function check. A SQL function is used rather than the
+-- built-in directly, because a final function takes the state as its only
+-- argument; the body check catches it once the final function is reached,
+-- and it is only reached if the final function is expanded at all.
+CREATE FUNCTION agg_final_setcfg(text) RETURNS text LANGUAGE sql
+    AS $$ SELECT set_config('work_mem', '58MB', false) $$;
+CREATE AGGREGATE agg_bad_final(text) (
+    SFUNC = textcat,
+    STYPE = text,
+    INITCOND = '',
+    FINALFUNC = agg_final_setcfg
+);
+
+-- An aggregate whose support functions are all harmless must keep working
+CREATE AGGREGATE agg_ok(int) (
+    SFUNC = int4pl,
+    STYPE = int,
+    INITCOND = '0'
+);
+
+-- The premise of the whole file: the aggregate is recorded IMMUTABLE even
+-- though its transition function is VOLATILE, so its own volatility says
+-- nothing about what calling it does
+SELECT provolatile AS aggregate_volatility FROM pg_proc
+    WHERE oid = 'agg_bad_trans(text,boolean)'::regprocedure;
+SELECT provolatile AS transition_fn_volatility FROM pg_proc
+    WHERE oid = 'set_config(text,text,boolean)'::regprocedure;
+
+SET pgedge_safesession.roles = 'safesession_agg';
+
+SET SESSION AUTHORIZATION safesession_agg;
+SET work_mem = '4MB';
+
+-- A blocked transition function must reject the aggregate
+SELECT agg_bad_trans('57MB', false) FROM (VALUES (1)) AS t(x);
+SHOW work_mem;
+
+-- ... and so must a blocked final function
+SELECT agg_bad_final('x') FROM (VALUES (1)) AS t(x);
+SHOW work_mem;
+
+-- The aggregate is checked wherever the walker meets it, not only in a
+-- top-level target list
+SELECT (SELECT agg_bad_trans('59MB', false)
+            FROM (VALUES (1)) AS t(x)) AS buried;
+SHOW work_mem;
+
+-- An aggregate with harmless support functions is unaffected
+SELECT agg_ok(x) AS harmless_aggregate FROM (VALUES (1), (2), (3)) AS t(x);
+
+-- ... as are the built-in aggregates
+SELECT count(*) > 0 AS builtin_aggregate FROM pg_class;
+
+RESET SESSION AUTHORIZATION;
+
+-- With block_c_functions off the support-function check is skipped, as
+-- everywhere else. That the transition function then takes effect is also
+-- what shows it really would have run.
+SET pgedge_safesession.block_c_functions = off;
+SET SESSION AUTHORIZATION safesession_agg;
+SET work_mem = '4MB';
+SELECT agg_bad_trans('57MB', false) AS unblocked
+    FROM (VALUES (1)) AS t(x);
+SHOW work_mem;
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.block_c_functions = on;
+
+-- Cleanup
+SET default_transaction_read_only = off;
+RESET pgedge_safesession.roles;
+RESET pgedge_safesession.block_c_functions;
+RESET work_mem;
+DROP AGGREGATE agg_bad_trans(text, boolean);
+DROP AGGREGATE agg_bad_final(text);
+DROP AGGREGATE agg_ok(int);
+DROP FUNCTION agg_final_setcfg(text);
+DROP ROLE safesession_agg;
+DROP EXTENSION pgedge_safesession;
