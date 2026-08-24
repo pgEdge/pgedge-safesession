@@ -41,7 +41,7 @@ SELECT name, setting FROM pg_settings
  pgedge_safesession.block_c_functions     | on
  pgedge_safesession.block_ddl             | on
  pgedge_safesession.block_dml             | on
- pgedge_safesession.roles                 |
+ pgedge_safesession.roles                 | 
 (5 rows)
 
 CREATE ROLE safesession_guc_test LOGIN;
