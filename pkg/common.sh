@@ -9,7 +9,7 @@ export PG_VERSION="${PG_VERSION:-17}"
 export PG_MAJOR_VERSION="$(echo "$PG_VERSION" | cut -d. -f1)"
 
 export PG_SAFESESSION_REPO="https://github.com/pgEdge/pgedge-safesession.git"
-export SAFESESSION_BRANCH="${COMPONENT_BRANCH:-v1.0-beta1}"
+export SAFESESSION_BRANCH="${COMPONENT_BRANCH:-v1.0-rc1}"
 
 export SAFESESSION_VERSION="${COMPONENT_VERSION:-1.0}"
 export SAFESESSION_BUILDNUM=${COMPONENT_BUILDNUM:-1}
