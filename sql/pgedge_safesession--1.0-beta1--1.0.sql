@@ -10,6 +10,6 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "ALTER EXTENSION pgedge_safesession UPDATE" to load this extension. \quit
 
--- No SQL-visible schema changes between 1.0-beta1 and 1.0-rc1; every
+-- No SQL-visible schema changes between 1.0-beta1 and 1.0; every
 -- change in this release is in the extension's test suite and
 -- documentation.
