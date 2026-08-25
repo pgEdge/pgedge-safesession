@@ -2,7 +2,7 @@ EXTENSION = pgedge_safesession
 MODULE_big = pgedge_safesession
 OBJS = src/pgedge_safesession.o
 
-DATA = sql/pgedge_safesession--1.0-beta1.sql
+DATA = $(wildcard sql/*.sql)
 
 REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_ddl safesession_copy safesession_ctas \
