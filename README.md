@@ -1,10 +1,3 @@
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/pgedge-labs-dark.svg">
-    <img alt="pgEdge Labs" src="docs/img/pgedge-labs-light.svg" width="320">
-  </picture>
-</div>
-
 # pgEdge SafeSession
 
 [![CI](https://github.com/pgEdge/pgedge-safesession/actions/workflows/ci.yml/badge.svg)](https://github.com/pgEdge/pgedge-safesession/actions/workflows/ci.yml)
