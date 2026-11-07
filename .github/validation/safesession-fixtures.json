@@ -1,0 +1,2257 @@
+{
+ "_note": "Validation fixture (existing-package validation, not a release build): the already-published SafeSession 1.0-1 RELEASE-channel files a real build cell uploads, per detector cell, with URL, sha256 and size from repository metadata (repomd.xml -> primary, InRelease -> Packages.gz, each chain checked), every URL headers-only probed (HTTP 200, Content-Length = size). PG19 packages of this version exist for all 14 PG19 cells, so all 56 cells are staged; PEP reports the PG19 cells as pg_not_supported gaps. Nothing is built or published from it; the receipts bind these files to this run's cells only.",
+ "cells": {
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg16": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "ed7c4c28db152728e823d4d156acb2bd8c5e1bc45b5756eb4e26913a32c85848",
+    "size": 58288,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "d92fca8079752136867f27a3aad5293c0993029c9238b5fedf2ec5116725c4db",
+    "size": 54870,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg17": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "429ca663171a9e3359921f876397499d21c3dad16c56491948d3ae098971f6df",
+    "size": 65386,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "47c6c0e008735bdfccf189a4890ad66fc23fb53dc163bca9701e3955e89d8cd4",
+    "size": 55766,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg18": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "e9853efab74153f88674fdbd8946eaf4e2801071b5f6a5aad7caadafdf5d854d",
+    "size": 67276,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "3a7d57a35da6d434075c464ff51c176650f3d0cfc1c132732265391985b85de0",
+    "size": 55876,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg19": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "a479db6bd1d6874210ce703c02ba4f2700959722ad6d70d2f53ba1136673c395",
+    "size": 62686,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.bookworm_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "eafc2a1f7290caa8c2681a0e59ddb02da09ed7651995f85f7b303cf42281d37e",
+    "size": 55248,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.bookworm_amd64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg16": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "bceedcc9c4aafdd84d219d1a18cfe9664930a383aeab330e6c3d9442a9147b26",
+    "size": 57616,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "26571ea9598ea148879028c9e3562e3ed99d4fb7fd3f0c7057196d2f210b6d0a",
+    "size": 54508,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg17": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "b53cfb28e1041fae752dca0550b9bfebf6114f6ccc167421f110c8428d8c7491",
+    "size": 64822,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "fe262772a49b76c5442ad926dece615bb3282d0ea11118dc6f78065b6317c00e",
+    "size": 55406,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg18": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "6766644f93f744489023fc557873bf05f9a828b977c8fc8592acc968f57b24ed",
+    "size": 66636,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "68b3109a9afc34d7034ab0c81f0102045e670e2defddb3c7e3b16d09561f94cc",
+    "size": 55496,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg19": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "ff3775088dcadf655bb369410ef2290d0cbf5ccc48011fb9f1e2becc73a916f4",
+    "size": 62026,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.bookworm_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "0ea68db44992430fa819fee96d71fa7ad3026fb77f9ebf2cde5cf60261217bcf",
+    "size": 54896,
+    "url": "https://apt.pgedge.com/release/bookworm/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.bookworm_arm64.deb",
+    "version": "1.0-1.bookworm"
+   }
+  ],
+  "pepcell.v1.deb.jammy.amd64.pkg.pg16": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "f85cd1de7d85cbf6cd95c9c6b7467c48c08f117afd0aa3f5c5cbc8d1cc3d5eaa",
+    "size": 58990,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "883b6a960f9be6b449ead3d25f500253aa7033a098cdc73759c38aa0186aad00",
+    "size": 50386,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.amd64.pkg.pg17": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "bce11dc978ddc51728bfb0ca9bbe2f041b33c98818c5f46a5f0526f3c7cafeb2",
+    "size": 66020,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "db9a5622fed1de8b36f15464f1c40770d3f8955ba5801e37ec301e75967d0b7a",
+    "size": 51296,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.amd64.pkg.pg18": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "afd96bba32ba0428084e7982140f2807ed327c8ad2a0281fa974e920de1ddfbf",
+    "size": 67778,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "738d8186922211752ec03df540e02809cc8b13f47526b46ade3b4221d92fd9eb",
+    "size": 51408,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.amd64.pkg.pg19": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "fd1b82bc5c0a4fe13014eb8dcc007bbfebf39d88cd2601cd14c84a4c515af254",
+    "size": 63290,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.jammy_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "45313989470364807fd9ed651f32c95301b8deec50c59076a3fbe35a6169d513",
+    "size": 50776,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.jammy_amd64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.arm64.pkg.pg16": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "f1f9676260dba5c4d20d471109692c1e125898471a838a18ddedba2572573a57",
+    "size": 58636,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "316c597395a714c78f6199f2bf4aed24c18eca24b35e918db36bd2b4d071a9fb",
+    "size": 49880,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.arm64.pkg.pg17": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "3092819dc0548256b202732c0faa6d522333a405308b5d76b820a7cea3c07105",
+    "size": 65668,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "3f1d37d44e78d5fb3ca8bfb90f936683c408a7d229071dc42107505cf9abbc11",
+    "size": 50798,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.arm64.pkg.pg18": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "e248a4f35a86af0f518689eb96284a16f712f498865d122da59cc58ed53c83d0",
+    "size": 67430,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "368f6e94ae755a3abc0da56c30332dad7807b930a26ec531c62344597d23fa89",
+    "size": 50880,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.jammy.arm64.pkg.pg19": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "a2f571114637aac8355339047292e3eeb3bd022c2555f6a56f794318853566b7",
+    "size": 62940,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.jammy_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "85379176384fd79a4fa8462fe0350e1a3cfe6730e65360abf8bd284b279b26c2",
+    "size": 50278,
+    "url": "https://apt.pgedge.com/release/jammy/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.jammy_arm64.deb",
+    "version": "1.0-1.jammy"
+   }
+  ],
+  "pepcell.v1.deb.noble.amd64.pkg.pg16": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "f0eb3f693a38e0527fd7c982abb966485e9a7960d2241754ddc7f4a7136d6169",
+    "size": 59136,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "fbd433c8df84af79274d23abdd186e0fe3bb489c47caad7fcd053d92916d47cc",
+    "size": 46166,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.amd64.pkg.pg17": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "c4124d9cdb8d44855c0ea2ab0c6999e19ddeadc5484be266981f7872634d855b",
+    "size": 66130,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "224115dac69a6e7bc63a6becedc7bf7ea4e079852052a8ec8d519eda5283c933",
+    "size": 46178,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.amd64.pkg.pg18": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "e9cff039757ba00c352d0746957046957ad9be46d670746a7af12cc01d411813",
+    "size": 67838,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "ed1d35d9bd07da08696629f9dc64b07530b80aaac43fa2a55d37c65cc1869573",
+    "size": 46128,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.amd64.pkg.pg19": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "d2b11933f0b547bff97064c93c92067d3e027882eb85fbb05c3223d7c9869cb5",
+    "size": 63412,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.noble_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "8e3dedff36a68059faab1e449254338718b3ab53244ff9edad695c20709dbdbf",
+    "size": 46134,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.noble_amd64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.arm64.pkg.pg16": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "d5f334a0d2d993d7e99b5db1d31ba1aa83b5d09d71f2ad49277ac9582ae1fa0f",
+    "size": 58720,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "b59fbd8f96d9c06fa43bd9fd70e04b00f35c8467075d565d44f690d7dc2fe238",
+    "size": 45952,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.arm64.pkg.pg17": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "006cd5a07733d72756f83ad5f401564272e60c579d3a4b2b045a75e045e80268",
+    "size": 65884,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "1ac0e78cb1b89e8b9f7a3c8aaba907cdb676bab74cd2c3efd256fefb95886ede",
+    "size": 45972,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.arm64.pkg.pg18": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "2d20b5a18d0562887b81a00a878ecb578f9453f2c601a06ee374f17860b17945",
+    "size": 67646,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "7a9a6268c36915181603520f56f379bc4da02515570e9ea7e11c7d593e67c3e3",
+    "size": 45936,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.noble.arm64.pkg.pg19": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "05f8a711cf60f702e9de70b86b10c1eb78afbfeca130ec9b09d769a55957c003",
+    "size": 63032,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.noble_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "ac2b11d291d47c5a80a6b3622e687017c6b2a4111aab3c8c689cc2a92e86c6ab",
+    "size": 45952,
+    "url": "https://apt.pgedge.com/release/noble/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.noble_arm64.deb",
+    "version": "1.0-1.noble"
+   }
+  ],
+  "pepcell.v1.deb.resolute.amd64.pkg.pg16": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "b32fe211051f2f6f6e7411cbe818e842da686c4253b6c59ce5921a8754f5933d",
+    "size": 59096,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "45d06f1376bb09d358d22c88708db7d3e5da472529a6e273eb99eb79adec1e9f",
+    "size": 44344,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.amd64.pkg.pg17": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "748d6a2bc0ba1a767dc9c60f8a0bdbd5eb5323c23d0e5d292172d57e40586121",
+    "size": 66202,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "6f3a9ff6a10531ae40488058fdcbe7e2260b8121722a061ca455a9dfe5a3a3aa",
+    "size": 44340,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.amd64.pkg.pg18": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "e5ef5f566c5d35ea448e999023db7170e75f3b021c6caf75c863030aad4d016c",
+    "size": 67886,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "3821a18b153b25e2666a490a631225a12b42c8baa4329ed4bd6a211df3e15651",
+    "size": 44348,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.amd64.pkg.pg19": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "189fb5d50416d3150a3530240e949bbfa18e232e40ec3906721471bf5cf833e4",
+    "size": 63414,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.resolute_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "ce112d22cac66e7935b325e3d8d6a507355ba7bc5045a441bca2beb31a116731",
+    "size": 44368,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.resolute_amd64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.arm64.pkg.pg16": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "9ae136de6f40d87a45cde637f19a53cff1073bd5e889f9287468e4eff577a55f",
+    "size": 58826,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "91d4bdcafb9976c3c8e68ddbcf06f34f94da00bee71abd81f243d9b4af8e9f8f",
+    "size": 44444,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.arm64.pkg.pg17": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "6ef272d95a735d2f3410b6cf7d721d1840aa339d1dac661a9aef967a1edabf9e",
+    "size": 65978,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "f0773bb707edf9965c67390c206b813d473146d340f9af4878ea72dcd5996276",
+    "size": 44444,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.arm64.pkg.pg18": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "f6d505a726548d286d3f24b6d38a976a49cb6cf1109aa4bb599ac79071234458",
+    "size": 67662,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "4dc78be83499c4743dfbc3a324e78c77eb52d5e61f29e03dcb577c274aff7248",
+    "size": 44422,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.resolute.arm64.pkg.pg19": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "385082e10ffe61bd4620dd09d15f88782536f7ea876010eaedad0726db6c9d12",
+    "size": 63202,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.resolute_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "fed805b11cdfe27ccbabd1e793fdf56ba4cebc62ca20c8d0399119e945be6942",
+    "size": 44434,
+    "url": "https://apt.pgedge.com/release/resolute/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.resolute_arm64.deb",
+    "version": "1.0-1.resolute"
+   }
+  ],
+  "pepcell.v1.deb.trixie.amd64.pkg.pg16": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "66803e478833596bfa799e3e794e1806ebeab7c7553c270dcbcf559d2863698e",
+    "size": 58106,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "5dd1626a7b7b413c345cc6482453b3fe63d3e6dec34cbba9e9e76f419fe9a565",
+    "size": 49860,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.amd64.pkg.pg17": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "09a040c2f38ec4fb61313beaf17dff3a5c649e1d6a0f805e9415ffb42d497c35",
+    "size": 65178,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "94c40c4b3d617843fad717d8913f30e39fa4f86b502b875bf7377f2d0e627603",
+    "size": 49860,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.amd64.pkg.pg18": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "f552dfbaf81e14256dddbedcb077e0b1873f4dfb6c5511df18fabbe489bd0d7c",
+    "size": 67112,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "c61ade8fb49a486a9537981826f1bfc8a96d39547879b0230991fe1e62e32116",
+    "size": 49852,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.amd64.pkg.pg19": [
+   {
+    "arch": "amd64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "9e01bc6045a32300b08ee451bedc523e1e4e0bf07ba2a68f3e35b0841f32edeb",
+    "size": 62528,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "amd64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.trixie_amd64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "a08cb49bfc6f649b96baaceaf39ff40b73dfaeb87635d1c0acce02b6af2a8035",
+    "size": 49888,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.trixie_amd64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.arm64.pkg.pg16": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-16-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession-dbgsym",
+    "sha256": "9913bc0e61ac990014d5f34f0eb911567ec51fd9d35d5dc732fe5c1a0fc055dc",
+    "size": 57632,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-16-safesession_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-16-safesession",
+    "sha256": "e06f104b4ccdeac03c29dfbf2b813a206c75b1f570844c1d222ef88479363f54",
+    "size": 49716,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-16-safesession_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.arm64.pkg.pg17": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-17-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession-dbgsym",
+    "sha256": "eb2a247d1ea7f35fb57cac9efcc09efb678b5dbf1188c841e75ed4eb9e43e1ae",
+    "size": 64822,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-17-safesession_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-17-safesession",
+    "sha256": "16a20ed0c0f7634af2fed1c8c3267f15b9b3a5be52ded8b9f21f007e6b2e29e4",
+    "size": 49716,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-17-safesession_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.arm64.pkg.pg18": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-18-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession-dbgsym",
+    "sha256": "f880bb03a8490cee5999ea2db495431b00abf3761e311ee890dfa93acc684e94",
+    "size": 66646,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-18-safesession_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-18-safesession",
+    "sha256": "ea5de8070abab45275f63e5e288634b4b2cc2d902ed2ca56248bb3b15f04865b",
+    "size": 49684,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-18-safesession_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.deb.trixie.arm64.pkg.pg19": [
+   {
+    "arch": "arm64",
+    "class": "debug",
+    "file": "pgedge-postgresql-19-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession-dbgsym",
+    "sha256": "af7a7b3d8706aa428f218ac11d12d6729fb59e1bd9cb7a36219b9e7fe4d38f79",
+    "size": 62050,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession-dbgsym_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   },
+   {
+    "arch": "arm64",
+    "class": "runtime",
+    "file": "pgedge-postgresql-19-safesession_1.0-1.trixie_arm64.deb",
+    "name": "pgedge-postgresql-19-safesession",
+    "sha256": "ac2a7ab26283f92e1a88c5be6255d22f30a25cc49e30d2f9d5b51dfc6cae2177",
+    "size": 49682,
+    "url": "https://apt.pgedge.com/release/trixie/pool/main/p/pgedge-safesession/pgedge-postgresql-19-safesession_1.0-1.trixie_arm64.deb",
+    "version": "1.0-1.trixie"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg16": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_16-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "277019165a708e7f8d5b12295b79f8e361e8a513df20e71913dc6de455012235",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_16-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_16-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "ff067857b9a54c721314f1031526e6c8b664c33aa58634f5372a344a988267c9",
+    "size": 26411,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_16-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debuginfo-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_16-debuginfo",
+    "sha256": "b9a8a32b20c23ae0ffdb0e6e7a551fa7256cf0081b62ff5f5a10e8ec2741a948",
+    "size": 69652,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_16-debuginfo-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debugsource-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_16-debugsource",
+    "sha256": "014a443d47f5563165aa8eeed356825ed387321da14bcb21b703e122a9baff4c",
+    "size": 27952,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_16-debugsource-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_16-llvmjit-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_16-llvmjit",
+    "sha256": "8633e80213e843aa69a696f9e363f422644c319bf58291d9c04b692a194e159e",
+    "size": 31655,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_16-llvmjit-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg17": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_17-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "2148b8f59b57ea92da82c4356496c30012f69c9c4f4b9c113ddfef51fc052183",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_17-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_17-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "365b89c580c048b02869d4463188f60a62549531a0801543d763e12073d57e22",
+    "size": 26408,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_17-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debuginfo-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_17-debuginfo",
+    "sha256": "033f318b5fb74a1cfdf647408f65f15b969cdf2507a04453a63016e820f34f49",
+    "size": 76364,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_17-debuginfo-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debugsource-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_17-debugsource",
+    "sha256": "6070527ae32e2a127a1257316a539179139ec3075bedddf787beb24391a99af1",
+    "size": 27952,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_17-debugsource-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_17-llvmjit-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_17-llvmjit",
+    "sha256": "ffbd1354ed23713dd1fbe2fe1971837d5d871bc10ab842f8d31558f1df5a9898",
+    "size": 31654,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_17-llvmjit-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg18": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_18-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "a15f75b51db96befcb89918215025fd2fdd72806188b82d6281b394472c20fc1",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_18-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_18-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "263a6d8ccffc286d7b1f216cbd9c720c1ad9cc1144c438c7816004b4c2193994",
+    "size": 26421,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_18-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debuginfo-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_18-debuginfo",
+    "sha256": "b05a99803bc4f06479dcae26b7f28a3d99926e967788da58ec749271c09f0e9f",
+    "size": 78998,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_18-debuginfo-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debugsource-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_18-debugsource",
+    "sha256": "24427696cbeb548aaa7fd489eb66f4f90fb0805227d1bd4bdc3204bbe393d7f8",
+    "size": 27952,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_18-debugsource-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_18-llvmjit-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_18-llvmjit",
+    "sha256": "69e168858c199a8758e929f8aba35e2ba74ed756090a1c20b6ee7172a27ab003",
+    "size": 31706,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_18-llvmjit-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg19": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_19-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "6cc4ba8cbf74f6b0beaed931cac77232814ea6d02eaa35e9c3fa86ebb6683907",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_19-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_19-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "a6044a8cddedf01b2a4d433ad80342587c7197a28ac9bfcee40db7d900e7756c",
+    "size": 26682,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_19-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debuginfo-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_19-debuginfo",
+    "sha256": "6188a006470e189fb8320e1dea4f719d81db6b3d44d76b4643d942a2b93809e1",
+    "size": 75593,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_19-debuginfo-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debugsource-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_19-debugsource",
+    "sha256": "9cda7d39911f2d367c2b23b34bb84027f959e448e2513683f013509397c9bd19",
+    "size": 27953,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_19-debugsource-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_19-llvmjit-1.0-1.el10.x86_64.rpm",
+    "name": "pgedge-safesession_19-llvmjit",
+    "sha256": "c1145365d09b93150c860d3007584b87be8aa1126c4daacee4332976647c8a27",
+    "size": 32482,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/x86_64/pgedge-safesession_19-llvmjit-1.0-1.el10.x86_64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg16": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_16-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "cfcfe52b9cf766d6426437fe0a2f8f0a10376295a278f90f80ae8a176f06eef2",
+    "size": 26485,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_16-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_16-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "277019165a708e7f8d5b12295b79f8e361e8a513df20e71913dc6de455012235",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_16-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debuginfo-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_16-debuginfo",
+    "sha256": "a9dcad3e655e87901505c98f215fb66f8fd4540fbc29186fbb16ebecec283ccc",
+    "size": 69082,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_16-debuginfo-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debugsource-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_16-debugsource",
+    "sha256": "5723df8de2ec6004209defe8e5ea93ebb3a6dec22abf966ba5442cb0778bc695",
+    "size": 27921,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_16-debugsource-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_16-llvmjit-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_16-llvmjit",
+    "sha256": "740ca83b294441d989330bcfc69834c29313672c0daef9395f1b875007a97856",
+    "size": 31528,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_16-llvmjit-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg17": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_17-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "7215f2ba0397ddf7ec6fc1e5659ce0abe901e79ea6c5fd5f41dd448e48c636d1",
+    "size": 26479,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_17-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_17-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "2148b8f59b57ea92da82c4356496c30012f69c9c4f4b9c113ddfef51fc052183",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_17-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debuginfo-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_17-debuginfo",
+    "sha256": "0103e367e9bd9652880b747cfae7d57dab382634effc6fe0a909675d002ea4cd",
+    "size": 76152,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_17-debuginfo-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debugsource-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_17-debugsource",
+    "sha256": "f9e43efc6197768da7171b9b40a1c92099465aaacf4ea73d0812056bcb21d4f4",
+    "size": 27921,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_17-debugsource-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_17-llvmjit-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_17-llvmjit",
+    "sha256": "59091b42a94e70d81a95d3c1783cce76c20c2bd424f5070bfe0b93c6e55613cb",
+    "size": 31532,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_17-llvmjit-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg18": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_18-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "3b721b422bb35c7c9e4abed9e9c329f773c2e890043149ff9041ca5f91d9b9af",
+    "size": 26474,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_18-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_18-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "a15f75b51db96befcb89918215025fd2fdd72806188b82d6281b394472c20fc1",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_18-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debuginfo-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_18-debuginfo",
+    "sha256": "71c510ff6c72c2cb0e77f0e680047c5563aed669607092d292044fee29dfab6b",
+    "size": 78398,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_18-debuginfo-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debugsource-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_18-debugsource",
+    "sha256": "69ff65f98322345096ed47a6d55821402bf1a0ef874abacecbfdc4df92bed3b0",
+    "size": 27921,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_18-debugsource-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_18-llvmjit-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_18-llvmjit",
+    "sha256": "cd42537b89a2c5ddcaaa7650ed00c74190a22a38bd1547fafccb9a0d6cb60127",
+    "size": 31594,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_18-llvmjit-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg19": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_19-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "2f6217db6ac4d90aecc54cb870abd31ccb75cad6b1f48111cd924a8561bbf4b5",
+    "size": 26787,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_19-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_19-1.0-1.el10.src.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "6cc4ba8cbf74f6b0beaed931cac77232814ea6d02eaa35e9c3fa86ebb6683907",
+    "size": 196936,
+    "url": "https://dnf.pgedge.com/release/10/SRPMS/pgedge-safesession_19-1.0-1.el10.src.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debuginfo-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_19-debuginfo",
+    "sha256": "ca31c7fb907877a5d5f118d4b29af09262354068be8ddd594e3ff7ac5e3dbadc",
+    "size": 74956,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_19-debuginfo-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debugsource-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_19-debugsource",
+    "sha256": "76b536229d2a440a5c00fdf73b60fef2d07a085d8e24d982d0c87426b88370b2",
+    "size": 27917,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_19-debugsource-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_19-llvmjit-1.0-1.el10.aarch64.rpm",
+    "name": "pgedge-safesession_19-llvmjit",
+    "sha256": "fdf0580205e13d388471dd7a9860a4a9550cec5526e7ceb53b360579723f12f9",
+    "size": 32085,
+    "url": "https://dnf.pgedge.com/release/10/RPMS/aarch64/pgedge-safesession_19-llvmjit-1.0-1.el10.aarch64.rpm",
+    "version": "1.0-1.el10"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg16": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_16-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "b60748d12b5bd5764b7a2bf33431a27a09f25d6d70c441fb6dc382332175195a",
+    "size": 192712,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_16-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_16-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "237eff1755cd1f1ca794f22445dbb18f45bdb51577def7750f19ccbd113bfba7",
+    "size": 26382,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_16-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debuginfo-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_16-debuginfo",
+    "sha256": "ddc83c92e7ad18bb6bb158ac31b5ab4366878c02df371fd1155d9ebf52adb822",
+    "size": 69378,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_16-debuginfo-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debugsource-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_16-debugsource",
+    "sha256": "33221e2f77cb5cee9cef097e74198734196f4597f9496312f63a1f8bbf42b6c1",
+    "size": 27807,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_16-debugsource-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_16-llvmjit-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_16-llvmjit",
+    "sha256": "c1a977157aaee2d234e1e851a501c4da6b5e8a7e4357f5fa81b24226e786262d",
+    "size": 31480,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_16-llvmjit-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg17": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_17-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "be669160c6943abb462bf6c0d5fe80663beeb0a9b0d5a4bd8ff8caa95d6cca1a",
+    "size": 192711,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_17-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_17-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "bf83a4bcfdbda146ca7eb1c2fce15a44893ded58d7cc97f22d221dead9ba833e",
+    "size": 26394,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_17-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debuginfo-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_17-debuginfo",
+    "sha256": "1d4f9c483110f9749ee3ff352f335d24654aafdff787f48860615236d9ded8e7",
+    "size": 76311,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_17-debuginfo-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debugsource-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_17-debugsource",
+    "sha256": "13e8e8fcaca71b35a6f6cf22594687519c3591027eb34e8d573fa2fedc27ac9c",
+    "size": 27810,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_17-debugsource-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_17-llvmjit-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_17-llvmjit",
+    "sha256": "c97cceb1b4961a2e32e5e4e4dcdd58166801317f6fe235e2a1c514d7adc9dfb2",
+    "size": 31488,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_17-llvmjit-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg18": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_18-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "b6ea6b53e2ebcaea5d04d26ecbc1d3f94173af0cc252485d90c3b8fd40704152",
+    "size": 192712,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_18-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_18-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "a3f272851f907d9c0261a83ad2641ee8cfaaa40172f81aa6cdb65d8c6935c613",
+    "size": 26387,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_18-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debuginfo-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_18-debuginfo",
+    "sha256": "30b019cb20f29ccb4d031d1eda762046e3654eef401da92d44f00b06ebd3b9df",
+    "size": 78736,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_18-debuginfo-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debugsource-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_18-debugsource",
+    "sha256": "5982bcfada6a20747059dd82ccfba960f578cb19abd095c7092e8c1497e4c08e",
+    "size": 27811,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_18-debugsource-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_18-llvmjit-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_18-llvmjit",
+    "sha256": "075e68a7d7494fb04c5e04a4ba8e42ea507639a74d8b2cd1ee3525e9d189bd09",
+    "size": 31538,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_18-llvmjit-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg19": [
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_19-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "49c0cf404e3a324e9bff8d4bf85f89e5e06eb55234135150509ae6405990dc6e",
+    "size": 192712,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_19-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "runtime",
+    "file": "pgedge-safesession_19-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "36973a859697bc3b089f363792ac180c8f1b01247b9b161ed202a69301cb9680",
+    "size": 26692,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_19-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debuginfo-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_19-debuginfo",
+    "sha256": "7fdfc999aaa604ccab6be4e421a384bd46e5b51cd3f6d46cbc060a97675d1007",
+    "size": 75359,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_19-debuginfo-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debugsource-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_19-debugsource",
+    "sha256": "941378b14493dbb525fdb7a3fd95b94c99c11cd890cbd71ba9a58c8913bc71ff",
+    "size": 27811,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_19-debugsource-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "x86_64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_19-llvmjit-1.0-1.el9.x86_64.rpm",
+    "name": "pgedge-safesession_19-llvmjit",
+    "sha256": "e90f8e1694d2b90a3453ac81164e6da5da08ae116a82ab4a359a863048b58cde",
+    "size": 32315,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/x86_64/pgedge-safesession_19-llvmjit-1.0-1.el9.x86_64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg16": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_16-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "5defff87dbeecad23a09905d636348937e709cb60095dd85ce095abee3fdd00b",
+    "size": 26221,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_16-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_16-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_16",
+    "sha256": "b60748d12b5bd5764b7a2bf33431a27a09f25d6d70c441fb6dc382332175195a",
+    "size": 192712,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_16-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debuginfo-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_16-debuginfo",
+    "sha256": "1fcb527b52abb27c99ce75df2de1c418b5e5e7b78591c65c945c0d29d297ac36",
+    "size": 68869,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_16-debuginfo-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_16-debugsource-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_16-debugsource",
+    "sha256": "f0bd812a2980baa87eb93b57430a984ee2cc7abaa5cf6b929d20ba4aa76fd12f",
+    "size": 27763,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_16-debugsource-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_16-llvmjit-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_16-llvmjit",
+    "sha256": "fa0778c056b50bc0acb4dadd804549bc868a05344ed60b04288eedcd963e0270",
+    "size": 31346,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_16-llvmjit-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg17": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_17-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "8b194d39076f398487d110f6477fce0671128da78bf4888cb806ff3bad641c3d",
+    "size": 26232,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_17-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_17-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_17",
+    "sha256": "be669160c6943abb462bf6c0d5fe80663beeb0a9b0d5a4bd8ff8caa95d6cca1a",
+    "size": 192711,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_17-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debuginfo-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_17-debuginfo",
+    "sha256": "946713d8c194c0f2a321468a213fbc9b51c3523506fea529c7d3b66ad92231ee",
+    "size": 75786,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_17-debuginfo-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_17-debugsource-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_17-debugsource",
+    "sha256": "1ac60162cbcd6bc4be53b49e3e42c0aee7aea588d7d1243a880b58d851e1bf3b",
+    "size": 27764,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_17-debugsource-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_17-llvmjit-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_17-llvmjit",
+    "sha256": "3fffe09a20237c97df5c3e70a849b45eefc8d3d3cfaf06785e8761f3f3fcdad8",
+    "size": 31351,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_17-llvmjit-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg18": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_18-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "0731c9a89dc30b3b327c60de0b9d28155d92b08015005f3129608e397343b03a",
+    "size": 26234,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_18-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_18-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_18",
+    "sha256": "b6ea6b53e2ebcaea5d04d26ecbc1d3f94173af0cc252485d90c3b8fd40704152",
+    "size": 192712,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_18-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debuginfo-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_18-debuginfo",
+    "sha256": "cbe2c751ef5f5582be9c6c774e7dbbe6eea0b202c3936e61f67784265c0c909b",
+    "size": 78244,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_18-debuginfo-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_18-debugsource-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_18-debugsource",
+    "sha256": "83d3bc06cc86c509d3f92548569c9c23e8229734e0f21fca7c11ea5ff17cde3b",
+    "size": 27764,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_18-debugsource-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_18-llvmjit-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_18-llvmjit",
+    "sha256": "12a7e12bf8f116abfcdfec9fd9d20fdb0146795a4936acfd309458a2b891d98a",
+    "size": 31413,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_18-llvmjit-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ],
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg19": [
+   {
+    "arch": "aarch64",
+    "class": "runtime",
+    "file": "pgedge-safesession_19-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "04fa6d057e7aa4fb755275b369a5470a3b143a2669b9aecbcfb7a9f616b7719a",
+    "size": 26531,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_19-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "src",
+    "class": "source",
+    "file": "pgedge-safesession_19-1.0-1.el9.src.rpm",
+    "name": "pgedge-safesession_19",
+    "sha256": "49c0cf404e3a324e9bff8d4bf85f89e5e06eb55234135150509ae6405990dc6e",
+    "size": 192712,
+    "url": "https://dnf.pgedge.com/release/9/SRPMS/pgedge-safesession_19-1.0-1.el9.src.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debuginfo-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_19-debuginfo",
+    "sha256": "e02b0b6dff0766932f329c9985ae2cbfe963d16235a73745cd59f88932670d01",
+    "size": 74798,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_19-debuginfo-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "debug",
+    "file": "pgedge-safesession_19-debugsource-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_19-debugsource",
+    "sha256": "299e1f863166a588604b9e9c2fe6b1921292328aa5b9f35d3aab80c9ce3f46f6",
+    "size": 27764,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_19-debugsource-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   },
+   {
+    "arch": "aarch64",
+    "class": "llvmjit",
+    "file": "pgedge-safesession_19-llvmjit-1.0-1.el9.aarch64.rpm",
+    "name": "pgedge-safesession_19-llvmjit",
+    "sha256": "3c5b1c6656101c9503136fcffe4f4ad2bf71edde4ac2549b664aebaab5eae425",
+    "size": 31903,
+    "url": "https://dnf.pgedge.com/release/9/RPMS/aarch64/pgedge-safesession_19-llvmjit-1.0-1.el9.aarch64.rpm",
+    "version": "1.0-1.el9"
+   }
+  ]
+ },
+ "channel": "release",
+ "detector": {
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.bookworm.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.bookworm.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:bookworm",
+   "os": "bookworm",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.jammy.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.jammy.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.jammy.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.jammy.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.jammy.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.jammy.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.jammy.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.jammy.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:jammy",
+   "os": "jammy",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.noble.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.noble.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.noble.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.noble.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.noble.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.noble.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.noble.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.noble.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:noble",
+   "os": "noble",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.resolute.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.resolute.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.resolute.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.resolute.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.resolute.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.resolute.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.resolute.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.resolute.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "ubuntu:resolute",
+   "os": "resolute",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.trixie.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.trixie.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.trixie.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.trixie.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "19"
+  },
+  "pepcell.v1.deb.trixie.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "16"
+  },
+  "pepcell.v1.deb.trixie.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "17"
+  },
+  "pepcell.v1.deb.trixie.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "18"
+  },
+  "pepcell.v1.deb.trixie.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "deb",
+   "image": "debian:trixie",
+   "os": "trixie",
+   "pg_major": "19"
+  },
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "16"
+  },
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "17"
+  },
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "18"
+  },
+  "pepcell.v1.rpm.el-10.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "19"
+  },
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "16"
+  },
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "17"
+  },
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "18"
+  },
+  "pepcell.v1.rpm.el-10.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:10",
+   "os": "el-10",
+   "pg_major": "19"
+  },
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg16": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "16"
+  },
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg17": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "17"
+  },
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg18": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "18"
+  },
+  "pepcell.v1.rpm.el-9.amd64.pkg.pg19": {
+   "arch": "amd64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "19"
+  },
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg16": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "16"
+  },
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg17": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "17"
+  },
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg18": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "18"
+  },
+  "pepcell.v1.rpm.el-9.arm64.pkg.pg19": {
+   "arch": "arm64",
+   "family": "rpm",
+   "image": "almalinux:9",
+   "os": "el-9",
+   "pg_major": "19"
+  }
+ },
+ "detector_source": "real detector output (lolor Release run 37756669120, job 113242799330, detector f54f427); identical detect inputs for snowflake, lolor and safesession",
+ "head_probe": {
+  "all_200_with_metadata_size": true,
+  "distinct_urls": 152
+ },
+ "metadata_documents": {
+  "https://apt.pgedge.com/release/bookworm/dists/bookworm/InRelease": {
+   "date": "Wed, 04 Nov 2026 09:40:02 UTC",
+   "sha256": "90552b71ce81348ae42f23ac5153c83c3153b5c2f22571810a1f6a0d355607a0",
+   "size": 3182
+  },
+  "https://apt.pgedge.com/release/bookworm/dists/bookworm/main/binary-amd64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "089dfefaf12b9509d662ceef723787120f94dac2a95577ad5bbe15bf1ca2842f",
+   "size": 78470
+  },
+  "https://apt.pgedge.com/release/bookworm/dists/bookworm/main/binary-arm64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "beea9d52bb68aa1cd7745818edbd9fe6a5b1232feee6dccaffbb34ddaee8e619",
+   "size": 78468
+  },
+  "https://apt.pgedge.com/release/jammy/dists/jammy/InRelease": {
+   "date": "Wed, 04 Nov 2026 09:42:50 UTC",
+   "sha256": "4e08455532ee3fa430ae4c13841a18bae05ac624344086a679f9e13872498cbf",
+   "size": 3176
+  },
+  "https://apt.pgedge.com/release/jammy/dists/jammy/main/binary-amd64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "4931245a81502da762a36c27114a09cc38b754c12e87f48084520ba3cabe5f09",
+   "size": 78511
+  },
+  "https://apt.pgedge.com/release/jammy/dists/jammy/main/binary-arm64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "49aa868c7c6a27dae6a5fa1728b834dbbe33595e807bf7b811272ff501b04347",
+   "size": 78471
+  },
+  "https://apt.pgedge.com/release/noble/dists/noble/InRelease": {
+   "date": "Wed, 04 Nov 2026 09:39:42 UTC",
+   "sha256": "8c7562c8cf3bd315df9c5382494cd4493cf9dd143d5b6c0c0c1d464914ce0349",
+   "size": 3176
+  },
+  "https://apt.pgedge.com/release/noble/dists/noble/main/binary-amd64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "ca3624c9170ea10c7eb0b612dd1423ce86f0b9dd9e7843ec5923b8c27ca3fe2d",
+   "size": 78521
+  },
+  "https://apt.pgedge.com/release/noble/dists/noble/main/binary-arm64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "c7732c12be284703b51aea3101e60c700d36796ecd7b1f845b91e2d57e14a7bd",
+   "size": 78464
+  },
+  "https://apt.pgedge.com/release/resolute/dists/resolute/InRelease": {
+   "date": "Wed, 04 Nov 2026 09:40:14 UTC",
+   "sha256": "82700c9a450d20f4cc8e06adaf2eb682a9e46424c265a2c1ae60745cec9125c5",
+   "size": 3182
+  },
+  "https://apt.pgedge.com/release/resolute/dists/resolute/main/binary-amd64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "a3da2c67cb7952d42fd24331b1151acb77c1af1e837d7458ef045969feecc79e",
+   "size": 78412
+  },
+  "https://apt.pgedge.com/release/resolute/dists/resolute/main/binary-arm64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "c663fb2aedce07418e107d2b426d96afbdf91e7f59a6f8542279aed6694251b0",
+   "size": 78417
+  },
+  "https://apt.pgedge.com/release/trixie/dists/trixie/InRelease": {
+   "date": "Wed, 04 Nov 2026 09:40:47 UTC",
+   "sha256": "df178fb4f7773497f52af5054e20612e9a2090151d0aca73b899ef53462ec529",
+   "size": 3178
+  },
+  "https://apt.pgedge.com/release/trixie/dists/trixie/main/binary-amd64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "062ba69271b4133162d8fd9692c39b8c55a98d36f704329c425d8f7d5c3b2338",
+   "size": 78557
+  },
+  "https://apt.pgedge.com/release/trixie/dists/trixie/main/binary-arm64/Packages.gz": {
+   "matches_inrelease": true,
+   "sha256": "2c590d0cbceae6333b04497d2be8e46017b1ad74112083a1627f44b5a9884949",
+   "size": 78480
+  },
+  "https://dnf.pgedge.com/release/10/RPMS/aarch64/repodata/2b250b66a8c92ee793a4761721e3e70d6fa9963e62076c37d789081dd83134b0-primary.xml.gz": {
+   "matches_repomd": true,
+   "sha256": "2b250b66a8c92ee793a4761721e3e70d6fa9963e62076c37d789081dd83134b0",
+   "size": 315503
+  },
+  "https://dnf.pgedge.com/release/10/RPMS/aarch64/repodata/repomd.xml": {
+   "revision": "1793785146",
+   "sha256": "cbd7918b88f95591ec7bdeb9928cbc0c0bb6a41a81597936dbf5dda20ee154ae",
+   "size": 3103
+  },
+  "https://dnf.pgedge.com/release/10/RPMS/x86_64/repodata/cbcce2ed1e1c9841ff21609c58a405bed097710649013182f7c9afec316e994a-primary.xml.gz": {
+   "matches_repomd": true,
+   "sha256": "cbcce2ed1e1c9841ff21609c58a405bed097710649013182f7c9afec316e994a",
+   "size": 314763
+  },
+  "https://dnf.pgedge.com/release/10/RPMS/x86_64/repodata/repomd.xml": {
+   "revision": "1793785173",
+   "sha256": "7be14e44b4876c2cbc2ec48c14205dedd9e4a41f78d04ad9cf251fdd2e913bf8",
+   "size": 3103
+  },
+  "https://dnf.pgedge.com/release/10/SRPMS/repodata/bb202f84026ab8239cb02a63cf08ede0827d43b447a2dd8a6b3e1c9e4b50159e-primary.xml.gz": {
+   "matches_repomd": true,
+   "sha256": "bb202f84026ab8239cb02a63cf08ede0827d43b447a2dd8a6b3e1c9e4b50159e",
+   "size": 44574
+  },
+  "https://dnf.pgedge.com/release/10/SRPMS/repodata/repomd.xml": {
+   "revision": "1793785215",
+   "sha256": "d654a9ace8dbc1459f51665068c1ff46e9e2c2e2eca031ff7643d4c25e1152e2",
+   "size": 3089
+  },
+  "https://dnf.pgedge.com/release/9/RPMS/aarch64/repodata/ca5943b75f523c1177ef7816c8b7ab762841b9ab6ed952a05d40d58420bbc387-primary.xml.gz": {
+   "matches_repomd": true,
+   "sha256": "ca5943b75f523c1177ef7816c8b7ab762841b9ab6ed952a05d40d58420bbc387",
+   "size": 314298
+  },
+  "https://dnf.pgedge.com/release/9/RPMS/aarch64/repodata/repomd.xml": {
+   "revision": "1793784966",
+   "sha256": "5a3c8c3ba45547e5c4631e8396a58d867c7612432379a8864827e0307c63c31f",
+   "size": 3103
+  },
+  "https://dnf.pgedge.com/release/9/RPMS/x86_64/repodata/f094e5b5cd0087eea9b5068de06389da0da8ae7d4c148a0898e987e61ee9b10a-primary.xml.gz": {
+   "matches_repomd": true,
+   "sha256": "f094e5b5cd0087eea9b5068de06389da0da8ae7d4c148a0898e987e61ee9b10a",
+   "size": 313701
+  },
+  "https://dnf.pgedge.com/release/9/RPMS/x86_64/repodata/repomd.xml": {
+   "revision": "1793784986",
+   "sha256": "452d953bbbb0c77e7f86306361f5c4ce02e85e520ba8a60d998e22257fb68b05",
+   "size": 3103
+  },
+  "https://dnf.pgedge.com/release/9/SRPMS/repodata/ea7c7117dbc019239574d64bcb6c4754a5842d586476a7c55f6442933f8d84bf-primary.xml.gz": {
+   "matches_repomd": true,
+   "sha256": "ea7c7117dbc019239574d64bcb6c4754a5842d586476a7c55f6442933f8d84bf",
+   "size": 46877
+  },
+  "https://dnf.pgedge.com/release/9/SRPMS/repodata/repomd.xml": {
+   "revision": "1793785027",
+   "sha256": "e4bc2d01dcfd72f62816e1576aa2c7fc318876b270c2fd71252f7c88b8367380",
+   "size": 3089
+  }
+ },
+ "product": "safesession",
+ "source_meta_sha256": "591472c11b47f898e7af188acd80bae2d612533fffe1d6927c361f5aa0955d96",
+ "version": "1.0-1"
+}
