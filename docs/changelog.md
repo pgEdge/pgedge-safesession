@@ -7,6 +7,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1] - 2026-11-06
+
+### Changed
+
+- Release workflow installs the repository client certificate
+  before configuring the pgEdge package repositories, and verifies
+  that the key matches the certificate, that the certificate and
+  its issuer are within their validity periods, and that the chain
+  issuer is the expected one
+- Release workflow fails if the repository rewrite fails
+- Release workflow pins the builder action by commit SHA
+- Packaging no longer builds for Debian bullseye
+- Packaging defaults now target v1.1
+- Removed pgEdge Labs branding from the README and documentation
+  landing page
+
 ## [1.0] - 2026-08-25
 
 ### Added
