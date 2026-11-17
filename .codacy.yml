@@ -1,0 +1,9 @@
+---
+# Codacy analysis configuration.
+#
+# The pg_regress scripts and their expected output create throwaway
+# roles and grant them privileges on test tables. That is test setup,
+# not shipped code, so it is excluded from analysis.
+exclude_paths:
+    - "test/sql/**"
+    - "test/expected/**"
