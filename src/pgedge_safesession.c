@@ -17,6 +17,7 @@
  */
 #include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/parallel.h"
 #include "access/table.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -53,6 +54,7 @@
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
+#include "utils/guc_tables.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/plancache.h"
@@ -64,6 +66,9 @@ PG_MODULE_MAGIC;
 
 /* GUC variables */
 static char *safesession_roles = NULL;
+static char *safesession_read_only_roles = NULL;
+static char *safesession_delegating_roles = NULL;
+static char *safesession_acting_read_only_roles = NULL;
 static bool safesession_block_dml = true;
 static bool safesession_block_ddl = true;
 static bool safesession_block_c_functions = true;
@@ -71,6 +76,7 @@ static bool safesession_block_all_c_functions = false;
 
 /* Saved hook values */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
+static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 static planner_hook_type prev_planner_hook = NULL;
@@ -217,6 +223,17 @@ name_is_unsafe_nonvolatile_builtin(const char *proname)
 
 static bool function_is_blocked(Oid funcid, void *context);
 static bool query_has_blocked_function_walker(Node *node, void *context);
+static bool session_is_delegating(void);
+
+/*
+ * The statement the executor is starting right now, if any. A statement's
+ * function calls are set up while it starts; see
+ * safesession_object_access().
+ */
+static QueryDesc *starting_query = NULL;
+
+/* plan_allows_set_config() of starting_query: -1 not yet read */
+static int starting_verdict = -1;
 
 /*
  * Is this function's language "trusted", i.e. does its body run its work
@@ -772,6 +789,45 @@ domain_constraint_is_blocked(Oid typeOid)
 }
 
 /*
+ * Is this call set_config() on a response.* setting, with the name written
+ * in the statement and the third argument written as true?
+ *
+ * PostgREST reads response.status and response.headers after a request to
+ * set the HTTP status and headers, and app functions, including a
+ * db-pre-request function, set them with set_config(..., true). A setting
+ * changed for the transaction only, and under a prefix PostgREST only
+ * reads, changes no data and outlives nothing, so a read-only API request
+ * may make this call. A name or flag that is not a constant, such as one
+ * built at run time or passed in, could name any setting and is not
+ * allowed.
+ */
+static bool
+is_response_set_config(FuncExpr *fexpr)
+{
+    Const *name;
+    Const *is_local;
+    char  *setting;
+
+    if (fexpr->funcid != F_SET_CONFIG || list_length(fexpr->args) != 3)
+        return false;
+
+    name = (Const *) linitial(fexpr->args);
+    is_local = (Const *) lthird(fexpr->args);
+
+    if (!IsA(name, Const) || name->constisnull ||
+        name->consttype != TEXTOID ||
+        !IsA(is_local, Const) || is_local->constisnull ||
+        is_local->consttype != BOOLOID ||
+        !DatumGetBool(is_local->constvalue))
+        return false;
+
+    setting = TextDatumGetCString(name->constvalue);
+
+    return pg_strncasecmp(setting, "response.", 9) == 0 &&
+        setting[9] != '\0';
+}
+
+/*
  * Walk a parse-analysed Query, and everything reachable from it
  * (subqueries, CTEs, set operations, join and index quals, aggregates,
  * window functions, ScalarArrayOpExpr, and so on), looking for a
@@ -790,6 +846,18 @@ query_has_blocked_function_walker(Node *node, void *context)
 
     /* This walker recurses into itself; bound it like core's walkers. */
     check_stack_depth();
+
+    /*
+     * In a delegating session, set_config() on a response.* setting is
+     * allowed (see is_response_set_config). Only the call itself is: its
+     * arguments are still walked, since the value may call anything.
+     */
+    if (IsA(node, FuncExpr) &&
+        is_response_set_config((FuncExpr *) node) &&
+        session_is_delegating())
+        return expression_tree_walker(node,
+                                      query_has_blocked_function_walker,
+                                      context);
 
     if (check_functions_in_node(node, function_is_blocked, context))
         return true;
@@ -845,6 +913,113 @@ query_has_blocked_function(Query *query)
 }
 
 /*
+ * Would this expression stop set_config() being set up for its plan? Yes
+ * for a set_config() call that is not the response.* form, and for what
+ * runs other code as the plan starts: a domain coercion sets up the
+ * domain's CHECK, and a user-defined aggregate reads its initial value
+ * through its state type's input function. (The planner already converts
+ * a plain aggregate's initial value, so the aggregate rule is defence in
+ * depth.)
+ */
+static bool
+expr_bars_set_config(Node *node, void *context)
+{
+    if (node == NULL)
+        return false;
+
+    if (IsA(node, FuncExpr) &&
+        ((FuncExpr *) node)->funcid == F_SET_CONFIG &&
+        !is_response_set_config((FuncExpr *) node))
+        return true;
+
+    if (IsA(node, CoerceToDomain) ||
+        (IsA(node, Aggref) &&
+         ((Aggref *) node)->aggfnoid >= FirstNormalObjectId))
+        return true;
+
+    return expression_tree_walker(node, expr_bars_set_config, context);
+}
+
+/*
+ * Is this plan made only of nodes plan_allows_set_config() reads whole,
+ * with nothing in them that bars set_config()?
+ */
+static bool
+plan_node_allows_set_config(Plan *plan)
+{
+    if (plan == NULL)
+        return true;
+
+    switch (nodeTag(plan))
+    {
+        case T_Result:
+            if (expr_bars_set_config(((Result *) plan)->resconstantqual,
+                                     NULL))
+                return false;
+            break;
+        case T_Limit:
+            if (expr_bars_set_config(((Limit *) plan)->limitOffset, NULL) ||
+                expr_bars_set_config(((Limit *) plan)->limitCount, NULL))
+                return false;
+            break;
+        case T_SubqueryScan:
+            if (!plan_node_allows_set_config(((SubqueryScan *) plan)->subplan))
+                return false;
+            break;
+        case T_Agg:
+            /* Grouping sets chain further Agg nodes; not read here */
+            if (((Agg *) plan)->chain != NIL)
+                return false;
+            break;
+        case T_ProjectSet:
+        case T_CteScan:
+        case T_Sort:
+        case T_Material:
+        case T_Unique:
+            break;
+        default:
+            return false;
+    }
+
+    return !expr_bars_set_config((Node *) plan->targetlist, NULL) &&
+        !expr_bars_set_config((Node *) plan->qual, NULL) &&
+        !expr_bars_set_config((Node *) plan->initPlan, NULL) &&
+        plan_node_allows_set_config(plan->lefttree) &&
+        plan_node_allows_set_config(plan->righttree);
+}
+
+/*
+ * May set_config() be set up for this plan, in a read-only API request?
+ *
+ * The object access hook sees a function but not its arguments, and the
+ * plan being started is the one place that shows both, so it is read here
+ * rather than trusted: what the Query-walking hooks checked is not all of
+ * it, since the planner adds parameter defaults and the coercions of an
+ * inlined SQL function's result. Only a plan made of the nodes a
+ * statement that reads no table is made of qualifies (SELECT
+ * set_config(...), PERFORM set_config(...) in PL/pgSQL, a SQL function
+ * called that way or as PostgREST calls a function), and only when every
+ * set_config() call in it is the response.* form. None of those nodes runs
+ * other code while the plan starts; a table scan, or the initial pruning
+ * of a partitioned table, can. Anything else is refused, as in 1.0.
+ */
+static bool
+plan_allows_set_config(PlannedStmt *pstmt)
+{
+    ListCell *lc;
+
+    if (!plan_node_allows_set_config(pstmt->planTree))
+        return false;
+
+    foreach(lc, pstmt->subplans)
+    {
+        if (!plan_node_allows_set_config((Plan *) lfirst(lc)))
+            return false;
+    }
+    return true;
+}
+
+/*
  * Cache of the configured roles resolved to OIDs.
  *
  * current_role_is_restricted() runs on every statement, and re-parsing
@@ -855,10 +1030,53 @@ query_has_blocked_function(Query *query)
  * here: is_member_of_role_nosuper() is checked per call against the live
  * session/current user and is itself cached and invalidated by core.
  *
- * The list lives in CacheMemoryContext so it survives across statements.
+ * The lists live in CacheMemoryContext so they survive across statements.
+ * cached_role_oids holds both names of the read-only list, roles and
+ * read_only_roles.
  */
 static List *cached_role_oids = NIL;
+static List *delegating_role_oids = NIL;
+static List *acting_read_only_oids = NIL;
 static bool  role_cache_valid = false;
+
+/*
+ * What is wrong with the lists is logged once per session, and again after
+ * a list changes; not after every catalog change or reload, which every
+ * session sees. lists_changed is set by the assign hook, which also runs at
+ * a reload that changes nothing, so the values last reported are kept to
+ * tell.
+ */
+static bool  lists_changed = true;
+static char *reported_lists = NULL;
+
+static inline bool
+list_is_set(const char *list)
+{
+    return list != NULL && list[0] != '\0';
+}
+
+/* Is any delegating role configured? Most servers have none. */
+static inline bool
+delegating_configured(void)
+{
+    return list_is_set(safesession_delegating_roles);
+}
+
+/* Is roleid in this list of role OIDs, or a member of a role in it? */
+static bool
+role_in_list(List *oids, Oid roleid)
+{
+    ListCell *lc;
+
+    foreach(lc, oids)
+    {
+        Oid listed = lfirst_oid(lc);
+
+        if (roleid == listed || is_member_of_role_nosuper(roleid, listed))
+            return true;
+    }
+    return false;
+}
 
 /*
  * Whether this session was restricted the last time we looked, as a
@@ -918,73 +1136,214 @@ invalidate_role_cache(Datum arg, int cacheid, uint32 hashvalue)
     ResetPlanCache();
 }
 
+/* The assign hook for every list of roles. */
 static void
 assign_safesession_roles(const char *newval, void *extra)
 {
     role_cache_valid = false;
+    lists_changed = true;
     ResetPlanCache();
 }
 
 /*
- * Rebuild cached_role_oids from the current GUC value. Must be called
- * with a valid transaction in progress (it reads the catalog).
+ * Append the OIDs of the roles named in a list to *oids, in
+ * CacheMemoryContext.
+ *
+ * A name that matches no role protects nothing. A list given in the
+ * configuration file is read with no transaction, so its names cannot be
+ * looked up then; say so in the server log here instead, when the
+ * caller asks. LOG rather than WARNING, so the client of every new
+ * session is not sent it; a SET of the list warns the client itself.
  */
 static void
-rebuild_role_cache(void)
+resolve_role_list(const char *setting, const char *list, List **oids,
+                  bool log_missing)
 {
     char     *rawstring;
     List     *rolelist;
     ListCell *lc;
-    List     *newoids = NIL;
+
+    if (!list_is_set(list))
+        return;
+
+    rawstring = pstrdup(list);
+
+    /* Malformed; the check hook rejects this, so treat as empty. */
+    if (SplitIdentifierString(rawstring, ',', &rolelist))
+    {
+        foreach(lc, rolelist)
+        {
+            char *rolename = (char *) lfirst(lc);
+            Oid   roleid = get_role_oid(rolename, true);
+
+            if (OidIsValid(roleid))
+            {
+                MemoryContext old = MemoryContextSwitchTo(CacheMemoryContext);
+
+                *oids = lappend_oid(*oids, roleid);
+                MemoryContextSwitchTo(old);
+            }
+            /*
+             * The statement and context are left out: this can run inside
+             * any statement, such as one that sets a password.
+             */
+            else if (log_missing)
+                ereport(LOG,
+                        (errmsg("%s: role \"%s\" does not exist",
+                                setting, rolename),
+                         errhidestmt(true),
+                         errhidecontext(true),
+                         /* The name was written with capitals, unquoted */
+                         strstr(list, rolename) == NULL ?
+                         errhint("A name not in double quotes is read in"
+                                 " lower case.") : 0));
+        }
+    }
+
+    pfree(rawstring);
+    list_free(rolelist);
+}
+
+/*
+ * Rebuild the cached lists of role OIDs from the GUC values. Must be
+ * called with a valid transaction in progress (it reads the catalog).
+ */
+static void
+rebuild_role_cache(void)
+{
+    List *read_only = NIL;
+    List *delegating = NIL;
+    List *acting = NIL;
 
     /* We are about to read the catalog; a transaction must be active. */
     Assert(IsTransactionState());
 
     /*
      * Mark the cache valid before resolving anything, so that an
-     * invalidation arriving while we work is not lost. The list is built to
-     * one side and installed only once it is complete, so an error part of
-     * the way through leaves the previous list in place rather than a
-     * half-built one that would silently under-restrict.
+     * invalidation arriving while we work is not lost. The lists are built
+     * to one side and installed only once they are complete, so an error
+     * part of the way through leaves the previous lists in place rather
+     * than half-built ones that would silently under-restrict.
      */
     role_cache_valid = true;
 
-    if (safesession_roles != NULL && safesession_roles[0] != '\0')
-    {
-        rawstring = pstrdup(safesession_roles);
-
-        /* Malformed; the check hook rejects this, so treat as empty. */
-        if (SplitIdentifierString(rawstring, ',', &rolelist))
-        {
-            foreach(lc, rolelist)
-            {
-                char *rolename = (char *) lfirst(lc);
-                Oid   roleid = get_role_oid(rolename, true);
-
-                if (OidIsValid(roleid))
-                {
-                    MemoryContext old;
-
-                    old = MemoryContextSwitchTo(CacheMemoryContext);
-                    newoids = lappend_oid(newoids, roleid);
-                    MemoryContextSwitchTo(old);
-                }
-            }
-        }
-
-        pfree(rawstring);
-        list_free(rolelist);
-    }
+    /* read_only_roles is the new name for roles; a role on either counts. */
+    resolve_role_list("pgedge_safesession.roles", safesession_roles,
+                      &read_only, false);
+    resolve_role_list("pgedge_safesession.read_only_roles",
+                      safesession_read_only_roles, &read_only, false);
+    resolve_role_list("pgedge_safesession.delegating_roles",
+                      safesession_delegating_roles, &delegating, false);
+    resolve_role_list("pgedge_safesession.acting_read_only_roles",
+                      safesession_acting_read_only_roles, &acting, false);
 
     list_free(cached_role_oids);
-    cached_role_oids = newoids;
+    list_free(delegating_role_oids);
+    list_free(acting_read_only_oids);
+    cached_role_oids = read_only;
+    delegating_role_oids = delegating;
+    acting_read_only_oids = acting;
+}
+
+/*
+ * Log what is wrong with the lists: each name that matches no role, and
+ * acting_read_only_roles set while delegating_roles is empty. Called in a
+ * session the lists apply to, once the lists may have changed; see
+ * lists_changed. Needs a transaction: it reads the catalog.
+ */
+static void
+report_role_lists(void)
+{
+    char *lists;
+    List *unused = NIL;
+
+    lists_changed = false;
+    lists = psprintf("%s\n%s\n%s\n%s",
+                     safesession_roles ? safesession_roles : "",
+                     safesession_read_only_roles ?
+                     safesession_read_only_roles : "",
+                     safesession_delegating_roles ?
+                     safesession_delegating_roles : "",
+                     safesession_acting_read_only_roles ?
+                     safesession_acting_read_only_roles : "");
+    if (reported_lists != NULL && strcmp(lists, reported_lists) == 0)
+    {
+        pfree(lists);
+        return;
+    }
+
+    resolve_role_list("pgedge_safesession.roles", safesession_roles,
+                      &unused, true);
+    resolve_role_list("pgedge_safesession.read_only_roles",
+                      safesession_read_only_roles, &unused, true);
+    resolve_role_list("pgedge_safesession.delegating_roles",
+                      safesession_delegating_roles, &unused, true);
+    resolve_role_list("pgedge_safesession.acting_read_only_roles",
+                      safesession_acting_read_only_roles, &unused, true);
+    list_free(unused);
+
+    /* The acting list only applies to delegating sessions */
+    if (list_is_set(safesession_acting_read_only_roles) &&
+        !delegating_configured())
+        ereport(LOG,
+                (errmsg("pgedge_safesession.acting_read_only_roles has no"
+                        " effect while pgedge_safesession.delegating_roles"
+                        " is empty"),
+                 errhidestmt(true),
+                 errhidecontext(true)));
+
+    if (reported_lists != NULL)
+        pfree(reported_lists);
+    reported_lists = MemoryContextStrdup(TopMemoryContext, lists);
+    pfree(lists);
+}
+
+/*
+ * Is this session logged in as a role named in delegating_roles?
+ *
+ * A delegating role, such as PostgREST's authenticator, logs in once and
+ * switches into another role for each transaction. Only the role itself
+ * counts, not a member of it: a person granted the delegating role is not
+ * a pool, and judging their session by the role it switches into would
+ * lift the read-only lists from it until it switched. Needs a
+ * transaction; every caller is past current_role_is_restricted().
+ */
+static Oid
+delegating_login(void)
+{
+    Oid login = GetSessionUserId();
+
+    if (!delegating_configured())
+        return InvalidOid;
+
+    if (!role_cache_valid)
+        rebuild_role_cache();
+
+    if (list_member_oid(delegating_role_oids, login))
+        return login;
+
+    /*
+     * A superuser login can switch with SET SESSION AUTHORIZATION instead,
+     * which changes the session user; the role it logged in as still
+     * counts.
+     */
+    login = GetAuthenticatedUserId();
+    return list_member_oid(delegating_role_oids, login) ? login : InvalidOid;
+}
+
+static bool
+session_is_delegating(void)
+{
+    return OidIsValid(delegating_login());
 }
 
 /*
  * Check whether the current session role is restricted.
  *
  * Returns true if the session user or current user is listed in
- * pgedge_safesession.roles, or is a member of a listed role.
+ * pgedge_safesession.roles or pgedge_safesession.read_only_roles, or is a
+ * member of a listed role. A delegating session is judged by the role it
+ * acts as instead; see below.
  *
  * Superuser exemption: if the SESSION user is a superuser, the
  * session is never restricted. We deliberately check the session
@@ -1005,26 +1364,78 @@ current_role_is_restricted(void)
     ListCell   *lc;
     Oid         session_userid;
     Oid         current_userid;
+    Oid         login;
 
     /* No roles configured means no restrictions */
-    if (safesession_roles == NULL ||
-        safesession_roles[0] == '\0')
+    if (!list_is_set(safesession_roles) &&
+        !list_is_set(safesession_read_only_roles) &&
+        !list_is_set(safesession_acting_read_only_roles))
         return false;
 
     /*
      * Superuser exemption: only check the session user.
      * This ensures that SECURITY DEFINER functions owned by
      * superusers cannot bypass the restriction when called
-     * from a restricted session.
+     * from a restricted session. A superuser login on delegating_roles is
+     * judged like any other delegating session, by the role it acts as;
+     * otherwise listing one would silently turn the read-only lists off
+     * for its requests.
      */
     session_userid = GetSessionUserId();
-    if (superuser_arg(session_userid))
+    if (superuser_arg(session_userid) && !session_is_delegating())
         return false;
+
+    /*
+     * Report what is wrong with the lists in a session they apply to: not
+     * a parallel worker, which copies the leader's settings. A superuser's
+     * session returned above, unless it is a delegating one.
+     */
+    if (lists_changed && !IsParallelWorker())
+        report_role_lists();
 
     if (!role_cache_valid)
         rebuild_role_cache();
 
     current_userid = GetUserId();
+
+    /*
+     * A delegating role (such as PostgREST's authenticator) is a member of
+     * every role it may switch into, so its memberships say nothing about
+     * what a request is acting as. The acting role is what counts: the one
+     * the session switched into, which stays the outer user inside a
+     * SECURITY DEFINER function, so the function's owner cannot lift the
+     * restriction; and, as in any session, the current user, so a function
+     * owned by a restricted role is restricted.
+     */
+    login = delegating_login();
+    if (OidIsValid(login))
+    {
+        Oid  acting = GetOuterUserId();
+        bool switched = OidIsValid(GetCurrentRoleId()) ||
+            session_userid != login;
+
+        /*
+         * Not switched: the pool's own statements, the switch among them,
+         * must run; inside a SECURITY DEFINER function, its owner counts.
+         */
+        if (!switched)
+            return current_userid != login &&
+                role_in_list(cached_role_oids, current_userid);
+
+        /*
+         * acting_read_only_roles is read-only for delegated requests alone:
+         * other sessions of the role, such as a person's own login, keep
+         * their writes. The delegating role named on a read-only list makes
+         * every request read-only once it has switched; its memberships
+         * still say nothing. A request switched into the login role itself
+         * is judged by that role's memberships too, which fails closed.
+         */
+        return role_in_list(acting_read_only_oids, acting) ||
+            list_member_oid(cached_role_oids, login) ||
+            role_in_list(cached_role_oids, acting) ||
+            (current_userid != acting && current_userid != login &&
+             role_in_list(cached_role_oids, current_userid));
+    }
 
     foreach(lc, cached_role_oids)
     {
@@ -1106,6 +1517,16 @@ safesession_reject(int sqlerrcode, const char *msg)
                      " by the pgedge_safesession extension.")));
 }
 
+/* Chain to the previous ExecutorStart hook or the standard function. */
+static void
+chain_executor_start(QueryDesc *queryDesc, int eflags)
+{
+    if (prev_ExecutorStart)
+        prev_ExecutorStart(queryDesc, eflags);
+    else
+        standard_ExecutorStart(queryDesc, eflags);
+}
+
 /*
  * ExecutorStart hook: block DML (including data-modifying CTEs) for
  * restricted roles. Blocked function calls are handled earlier, in the
@@ -1114,7 +1535,9 @@ safesession_reject(int sqlerrcode, const char *msg)
 static void
 safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
-    bool restricted = false;
+    bool       restricted = false;
+    QueryDesc *save_starting;
+    int        save_verdict;
 
     /*
      * Only consult the catalog (the role lookups in
@@ -1191,11 +1614,57 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
         }
     }
 
-    /* Chain to previous hook or standard function */
-    if (prev_ExecutorStart)
-        prev_ExecutorStart(queryDesc, eflags);
+    /*
+     * Chain to previous hook or standard function. Where a delegating role
+     * is configured, note which statement is starting, for
+     * safesession_object_access(). Elsewhere nothing reads it, so the cost
+     * of keeping it is not paid.
+     */
+    if (!delegating_configured())
+    {
+        chain_executor_start(queryDesc, eflags);
+        return;
+    }
+
+    save_starting = starting_query;
+    save_verdict = starting_verdict;
+    starting_query = queryDesc;
+    starting_verdict = -1;
+    PG_TRY();
+    {
+        chain_executor_start(queryDesc, eflags);
+    }
+    PG_FINALLY();
+    {
+        starting_query = save_starting;
+        starting_verdict = save_verdict;
+    }
+    PG_END_TRY();
+}
+
+/*
+ * ExecutorEnd hook: on a server with a delegating role, look again at the
+ * restriction once a statement ends.
+ *
+ * A statement can change the role the session acts as, as the switch a
+ * pool runs at the start of each request does with set_config('role',
+ * ...). Noticing the change here, as the utility hook does after SET ROLE,
+ * discards the cached plans before the next statement fetches its plan,
+ * so the Query-walking hooks check that plan under the new state rather
+ * than the next statement running one a writer cached. The set_config()
+ * check in safesession_object_access() reads the plan itself and does not
+ * depend on this.
+ */
+static void
+safesession_ExecutorEnd(QueryDesc *queryDesc)
+{
+    if (prev_ExecutorEnd)
+        prev_ExecutorEnd(queryDesc);
     else
-        standard_ExecutorStart(queryDesc, eflags);
+        standard_ExecutorEnd(queryDesc);
+
+    if (delegating_configured() && IsTransactionState())
+        note_restriction_state(current_role_is_restricted());
 }
 
 /*
@@ -1317,6 +1786,22 @@ safesession_planner(Query *parse, const char *query_string,
  *
  * Chained first, so a co-installed extension still sees the access even
  * when we go on to reject it.
+ *
+ * This hook sees a function but not its arguments, so it cannot tell a
+ * set_config() on a response.* setting, which the Query-walking hooks
+ * allow in a delegating session, from any other. So in a delegating
+ * session set_config() is let through here only while a statement starts,
+ * which is when its calls are set up, and only if plan_allows_set_config()
+ * read that statement's plan and found nothing but the response.* form.
+ * Anywhere else, such as a domain's CHECK run for a bound parameter or a
+ * PL/pgSQL variable, a function run while a statement starts, or a
+ * fast-path call, it is refused as before.
+ *
+ * That also refuses a set_config() that PL/pgSQL evaluates as an
+ * expression on its own, such as v := set_config(...) or RETURN
+ * set_config(...), which 1.0 refused too: this hook cannot tell it from a
+ * domain's CHECK. PERFORM set_config(...) runs as a statement and is
+ * allowed, so the error says to use it.
  */
 static void
 safesession_object_access(ObjectAccessType access, Oid classId,
@@ -1325,14 +1810,35 @@ safesession_object_access(ObjectAccessType access, Oid classId,
     if (prev_object_access_hook)
         prev_object_access_hook(access, classId, objectId, subId, arg);
 
-    if (access == OAT_FUNCTION_EXECUTE &&
-        safesession_block_c_functions &&
-        IsTransactionState() &&
-        current_role_is_restricted() &&
-        function_is_blocked(objectId, NULL))
-        safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
-                           "cannot execute functions that may have"
-                           " side effects in a read-only session");
+    if (access != OAT_FUNCTION_EXECUTE ||
+        !safesession_block_c_functions ||
+        !IsTransactionState() ||
+        !current_role_is_restricted() ||
+        !function_is_blocked(objectId, NULL))
+        return;
+
+    if (objectId == F_SET_CONFIG && session_is_delegating())
+    {
+        if (starting_query != NULL && starting_verdict < 0)
+            starting_verdict =
+                plan_allows_set_config(starting_query->plannedstmt);
+        if (starting_query != NULL && starting_verdict)
+            return;
+
+        ereport(ERROR,
+                (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                 errmsg("cannot execute functions that may have side"
+                        " effects in a read-only session"),
+                 errhint("This session is restricted to read-only access"
+                         " by the pgedge_safesession extension. To set a"
+                         " response.* setting, call set_config() in a"
+                         " statement that reads no table, such as PERFORM"
+                         " set_config(...) in PL/pgSQL.")));
+    }
+
+    safesession_reject(ERRCODE_READ_ONLY_SQL_TRANSACTION,
+                       "cannot execute functions that may have"
+                       " side effects in a read-only session");
 }
 
 /*
@@ -1362,6 +1868,42 @@ guc_set_requests_read_only(VariableSetStmt *stmt)
         return false;
 
     return requested;
+}
+
+/*
+ * Refuse a SET, ALTER SYSTEM, ALTER ROLE ... SET or ALTER DATABASE ... SET
+ * of a pgedge_safesession setting this release does not know, such as a
+ * misspelled one, in any session.
+ *
+ * PostgreSQL 15 and later refuse such a name themselves, but PostgreSQL 14
+ * accepts it with no effect. ALTER SYSTEM then saves it, and the server
+ * would not start at its next restart (see refuse_unknown_settings), so a
+ * typo is refused here, when it is typed. RESET and SET ... TO DEFAULT
+ * are let through, so a name saved before can still be removed.
+ */
+static void
+refuse_unknown_setting_name(VariableSetStmt *stmt)
+{
+    const char *name;
+
+    if (stmt == NULL || stmt->kind == VAR_RESET ||
+        stmt->kind == VAR_RESET_ALL || stmt->kind == VAR_SET_DEFAULT)
+        return;
+
+    name = stmt->name;
+    if (name == NULL ||
+        pg_strncasecmp(name, "pgedge_safesession.", 19) != 0)
+        return;
+
+    /* Defined by this module: known, and not a placeholder */
+    if (GetConfigOption(name, true, false) != NULL &&
+        (GetConfigOptionFlags(name, true) & GUC_CUSTOM_PLACEHOLDER) == 0)
+        return;
+
+    ereport(ERROR,
+            (errcode(ERRCODE_UNDEFINED_OBJECT),
+             errmsg("unrecognized configuration parameter \"%s\"", name),
+             errhint("pgedge_safesession does not know this setting.")));
 }
 
 /*
@@ -1653,6 +2195,22 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     Node *parsetree = pstmt->utilityStmt;
     bool  restricted = false;
 
+    /* A misspelled pgedge_safesession setting, in any session */
+    if (parsetree != NULL)
+    {
+        if (IsA(parsetree, VariableSetStmt))
+            refuse_unknown_setting_name((VariableSetStmt *) parsetree);
+        else if (IsA(parsetree, AlterSystemStmt))
+            refuse_unknown_setting_name(
+                ((AlterSystemStmt *) parsetree)->setstmt);
+        else if (IsA(parsetree, AlterRoleSetStmt))
+            refuse_unknown_setting_name(
+                ((AlterRoleSetStmt *) parsetree)->setstmt);
+        else if (IsA(parsetree, AlterDatabaseSetStmt))
+            refuse_unknown_setting_name(
+                ((AlterDatabaseSetStmt *) parsetree)->setstmt);
+    }
+
     /*
      * This hook runs for every utility statement, including COMMIT
      * and ROLLBACK issued after an error. At that point the
@@ -1746,6 +2304,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
              * - DISCARD (session-state reset; enforcement is
              *   re-asserted per statement, so it is harmless and
              *   is needed by connection poolers)
+             * - SET CONSTRAINTS (only changes when this
+             *   transaction's deferred checks run; a pool such as
+             *   PostgREST sends it to roll a request back)
              *
              * CHECKPOINT is deliberately not here: it is not a
              * read-only operation (heavy I/O, emits WAL) and is a
@@ -1762,6 +2323,7 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
             case T_NotifyStmt:
             case T_UnlistenStmt:
             case T_DiscardStmt:
+            case T_ConstraintsSetStmt:
                 /* These are allowed */
                 break;
 
@@ -1934,17 +2496,18 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
 }
 
 /*
- * GUC check hook for pgedge_safesession.roles.
+ * GUC check hook for each list of roles.
  *
  * Validates the list at assignment time so that a misconfiguration is
  * surfaced then, rather than silently disabling all protection. A list
  * that does not parse is rejected outright. Names that do not resolve to
- * a role draw a WARNING, but only when we can safely read the catalog:
- * at postmaster start and during a SIGHUP reload there is no transaction,
- * so name resolution is skipped there (the syntax check still runs).
+ * a role draw a WARNING naming the setting, but only when we can safely
+ * read the catalog: at postmaster start and during a SIGHUP reload there
+ * is no transaction, so name resolution is skipped there (the syntax check
+ * still runs, and resolve_role_list() logs the names later).
  */
 static bool
-check_safesession_roles(char **newval, void **extra, GucSource source)
+check_role_list(const char *setting, char **newval)
 {
     char     *rawstring;
     List     *rolelist;
@@ -1957,13 +2520,27 @@ check_safesession_roles(char **newval, void **extra, GucSource source)
 
     if (!SplitIdentifierString(rawstring, ',', &rolelist))
     {
+        /*
+         * Postgres drops a bad value given at start with a WARNING, which
+         * would leave this protection off, so refuse to start instead. At
+         * a reload it keeps the previous value and logs the error.
+         */
+        if (process_shared_preload_libraries_in_progress)
+            ereport(FATAL,
+                    (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                     errmsg("invalid value for parameter \"%s\": \"%s\"",
+                            setting, *newval),
+                     errdetail("List syntax is invalid."),
+                     errhint("pgedge_safesession does not start with a"
+                             " setting it cannot read.")));
         GUC_check_errdetail("List syntax is invalid.");
         pfree(rawstring);
         list_free(rolelist);
         return false;
     }
 
-    if (IsTransactionState())
+    /* A parallel worker copies the leader's settings; the leader warned. */
+    if (IsTransactionState() && !IsParallelWorker())
     {
         foreach(lc, rolelist)
         {
@@ -1971,14 +2548,84 @@ check_safesession_roles(char **newval, void **extra, GucSource source)
 
             if (!OidIsValid(get_role_oid(rolename, true)))
                 ereport(WARNING,
-                        (errmsg("pgedge_safesession.roles: role"
-                                " \"%s\" does not exist", rolename)));
+                        (errmsg("%s: role \"%s\" does not exist",
+                                setting, rolename),
+                         /* The name was written with capitals, unquoted */
+                         strstr(*newval, rolename) == NULL ?
+                         errhint("A name not in double quotes is read in"
+                                 " lower case.") : 0));
         }
     }
 
     pfree(rawstring);
     list_free(rolelist);
     return true;
+}
+
+static bool
+check_safesession_roles(char **newval, void **extra, GucSource source)
+{
+    return check_role_list("pgedge_safesession.roles", newval);
+}
+
+static bool
+check_read_only_roles(char **newval, void **extra, GucSource source)
+{
+    return check_role_list("pgedge_safesession.read_only_roles", newval);
+}
+
+static bool
+check_delegating_roles(char **newval, void **extra, GucSource source)
+{
+    return check_role_list("pgedge_safesession.delegating_roles", newval);
+}
+
+static bool
+check_acting_read_only_roles(char **newval, void **extra, GucSource source)
+{
+    return check_role_list("pgedge_safesession.acting_read_only_roles",
+                           newval);
+}
+
+/*
+ * Refuse to start with a pgedge_safesession setting this release does not
+ * know, such as a misspelled one. Postgres would drop it with a WARNING,
+ * leaving the protection it was meant to turn on off.
+ */
+static void
+refuse_unknown_settings(void)
+{
+    struct config_generic **vars;
+    int         nvars;
+    int         i;
+
+#if PG_VERSION_NUM >= 160000
+    vars = get_guc_variables(&nvars);
+#else
+    vars = get_guc_variables();
+    nvars = GetNumConfigOptions();
+#endif
+    for (i = 0; i < nvars; i++)
+    {
+        if ((vars[i]->flags & GUC_CUSTOM_PLACEHOLDER) &&
+            pg_strncasecmp(vars[i]->name, "pgedge_safesession.", 19) == 0)
+            ereport(FATAL,
+                    (errcode(ERRCODE_UNDEFINED_OBJECT),
+                     errmsg("unrecognized configuration parameter \"%s\"",
+                            vars[i]->name),
+                     errhint("pgedge_safesession does not start with a"
+                             " setting it does not know."),
+                     /* errcontext() is a macro: one branch each */
+                     vars[i]->sourcefile ?
+                     (errcontext("line %d of configuration file \"%s\"",
+                                 vars[i]->sourceline,
+                                 vars[i]->sourcefile)) :
+                     (errcontext("given on the %s",
+                                 GucSource_Names[vars[i]->source]))));
+    }
+#if PG_VERSION_NUM >= 160000
+    pfree(vars);
+#endif
 }
 
 /*
@@ -2004,18 +2651,63 @@ _PG_init(void)
                            "shared_preload_libraries and restart the "
                            "server.")));
 
-    /* Define GUCs */
+    /* Define GUCs (a list given at start that does not parse is FATAL) */
     DefineCustomStringVariable(
         "pgedge_safesession.roles",
         "Roles that are restricted to read-only sessions.",
-        "A comma-separated list of role names. A session whose "
-        "session or current user is one of these roles, or is a "
-        "member of one, is restricted to read-only access.",
+        "The old name of pgedge_safesession.read_only_roles, which "
+        "keeps working; a role on either list is restricted.",
         &safesession_roles,
         "",
         PGC_SUSET,
         GUC_LIST_INPUT,
         check_safesession_roles,
+        assign_safesession_roles,
+        NULL);
+
+    DefineCustomStringVariable(
+        "pgedge_safesession.read_only_roles",
+        "Roles that are restricted to read-only sessions.",
+        "A comma-separated list of role names. A session whose "
+        "session or current user is one of these roles, or is a "
+        "member of one, is restricted to read-only access. A session "
+        "of pgedge_safesession.delegating_roles is judged by the role "
+        "it acts as instead.",
+        &safesession_read_only_roles,
+        "",
+        PGC_SUSET,
+        GUC_LIST_INPUT,
+        check_read_only_roles,
+        assign_safesession_roles,
+        NULL);
+
+    DefineCustomStringVariable(
+        "pgedge_safesession.delegating_roles",
+        "Login roles that switch role for each transaction.",
+        "A comma-separated list of role names, such as PostgREST's "
+        "authenticator. A session whose login role is one of these "
+        "roles itself (not a member of one) is judged by the role "
+        "it acts as, not by the login role's memberships.",
+        &safesession_delegating_roles,
+        "",
+        PGC_SUSET,
+        GUC_LIST_INPUT,
+        check_delegating_roles,
+        assign_safesession_roles,
+        NULL);
+
+    DefineCustomStringVariable(
+        "pgedge_safesession.acting_read_only_roles",
+        "Roles that are read-only when a delegating role acts as them.",
+        "A comma-separated list of role names. When a session of one "
+        "of pgedge_safesession.delegating_roles acts as one of these "
+        "roles, or a member of one, it is restricted to read-only "
+        "access. Other sessions of these roles are not affected.",
+        &safesession_acting_read_only_roles,
+        "",
+        PGC_SUSET,
+        GUC_LIST_INPUT,
+        check_acting_read_only_roles,
         assign_safesession_roles,
         NULL);
 
@@ -2089,6 +2781,10 @@ _PG_init(void)
     prev_ExecutorStart = ExecutorStart_hook;
     ExecutorStart_hook = safesession_ExecutorStart;
 
+    /* Install ExecutorEnd hook (look again after a role switch) */
+    prev_ExecutorEnd = ExecutorEnd_hook;
+    ExecutorEnd_hook = safesession_ExecutorEnd;
+
     /* Install ProcessUtility hook */
     prev_ProcessUtility = ProcessUtility_hook;
     ProcessUtility_hook = safesession_ProcessUtility;
@@ -2126,6 +2822,8 @@ _PG_init(void)
                                   (Datum) 0);
     CacheRegisterSyscacheCallback(AUTHMEMROLEMEM, invalidate_role_cache,
                                   (Datum) 0);
+
+    refuse_unknown_settings();
 
 #if PG_VERSION_NUM >= 150000
     MarkGUCPrefixReserved("pgedge_safesession");

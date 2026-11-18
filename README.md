@@ -15,7 +15,9 @@ for restricted roles.
   function execution
 - Configurable protection layers via SUSET GUCs
 - Session-user anchored: SET ROLE and SECURITY DEFINER
-  functions cannot escape restrictions
+  functions cannot escape restrictions; a pooled login role,
+  such as PostgREST's, is judged by the role each request
+  acts as
 - Role membership inheritance: members of restricted roles
   are also restricted
 - Superuser exemption: superusers are never blocked
@@ -50,7 +52,7 @@ Configure restricted roles:
 -- Optional: register in pg_extension catalog
 CREATE EXTENSION pgedge_safesession;
 
-ALTER SYSTEM SET pgedge_safesession.roles =
+ALTER SYSTEM SET pgedge_safesession.read_only_roles =
     'readonly_user, reporting_role';
 SELECT pg_reload_conf();
 ```

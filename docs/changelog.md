@@ -7,6 +7,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pgedge_safesession.delegating_roles`: a session logged in
+  as one of these roles is judged by the role it switches
+  into, not by its own memberships
+- `pgedge_safesession.acting_read_only_roles`: read-only for
+  delegated requests acting as these roles only
+- `pgedge_safesession.read_only_roles`, the new name of
+  `pgedge_safesession.roles`, which keeps working
+- A read-only delegated request may call `set_config()` on a
+  `response.*` setting for the transaction, from a simple
+  statement that reads no table (see Delegating Sessions)
+- A role named in a list that does not exist is reported in
+  the server log, once per session and again after a list
+  changes; so is `acting_read_only_roles` set without
+  `delegating_roles`
+- `SET CONSTRAINTS` is allowed in read-only sessions
+  (PostgREST sends it to roll a request back)
+- `pg_settings` lists the three new settings
+
+### Changed
+
+- Each read-only delegated request discards the connection's
+  cached plans, so prepared statements and PL/pgSQL plans
+  are planned again on those requests
+- A list of roles that does not parse, or a
+  `pgedge_safesession` setting name the extension does not
+  know, now stops the server from starting instead of being
+  dropped with a warning
+- A `pgedge_safesession` setting name the extension does not
+  know is refused by `SET`, `ALTER SYSTEM`, `ALTER ROLE` and
+  `ALTER DATABASE`, including on PostgreSQL 14, which
+  accepted it. On PostgreSQL 15 and later the error is now
+  42704 with a hint, instead of PostgreSQL's 42602. Before
+  upgrading, check `pg_file_settings` for such names; see
+  the docs
+
 ## [1.1] - 2026-11-06
 
 ### Changed
