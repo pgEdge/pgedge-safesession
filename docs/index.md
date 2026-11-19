@@ -231,6 +231,25 @@ whole table.
   view with its own `WHERE` inside a `BEGIN ATOMIC`
   function.
 
+### `pgedge_safesession.locked_setting_prefixes`
+
+Default: `request`
+
+Setting prefixes whose settings a delegated request cannot
+change after the role switch. PostgREST puts the request's
+claims, method, path and headers under `request`, and
+row-level security policies and functions such as
+`auth.uid()` trust them. See [Role Lock](#role-lock).
+
+Each entry is one or more names joined by dots, such as
+`request` or `app.user`, with no trailing dot. An entry
+covers every setting under it: `app.user` covers
+`app.user.id`, not `app.username`. Only custom settings,
+whose names have a dot, are held. An empty list holds no
+settings; the role is still locked.
+
+It has no effect unless `delegating_roles` is set.
+
 ### `pgedge_safesession.block_dml`
 
 Default: `on`
@@ -435,10 +454,66 @@ gets an error on each read-only request; switch with the
 protocol's prepared statements, `SET LOCAL ROLE`, or an
 unprepared `set_config()`.
 
-This release does not stop a request from switching role a
-second time in the same transaction, for example with
-`SET ROLE`, `RESET ROLE` or `RESET SESSION AUTHORIZATION`.
-Turn on `delegating_roles` only with a release that does.
+A request cannot switch role a second time in the same
+transaction, or change its claims; see
+[Role Lock](#role-lock).
+
+### Role Lock
+
+A delegating session may switch role once in each
+transaction. The first change of role takes the lock, and
+any later change in the same transaction is refused with
+SQLSTATE 42501. PostgREST answers it with 403, or with 401
+when the request has no token. Every way to change role is
+covered: `SET ROLE`, `SET LOCAL ROLE`, `RESET ROLE`,
+`set_config('role', ...)`, a function's `SET role` clause,
+and `SET SESSION AUTHORIZATION` and its `RESET`. Setting
+the same role again is refused too. The next transaction
+starts with no lock, so the next request on the connection
+works.
+
+When the statement that switched role ends, every setting
+the session already has under a prefix in
+`locked_setting_prefixes` is held until the transaction
+ends. It keeps its value, and `set_config()`, `SET`,
+`SET LOCAL` and `RESET` on it are refused with SQLSTATE
+42501. Other settings, such as `response.status` and
+`response.headers`, can still change.
+
+- The pool must set the request's settings in the same
+  transaction as the role switch, in the switch statement
+  or before it. PostgREST does. Once a setting has been
+  held on a connection, the pool cannot set it in a later
+  statement than the switch.
+- A switch inside a savepoint that rolls back does not
+  count, so the pool can switch again. A request's own
+  savepoint cannot undo the lock.
+- SECURITY DEFINER functions work as before. PostgreSQL
+  does not let them change role.
+- Sessions that are not delegating are not locked.
+- This release does not hold a setting under a locked
+  prefix that the session did not have at the switch, such
+  as one a request creates itself. From the next request on
+  the connection, it is held like the others, however it
+  was created. A function that sets a setting of its own
+  should use another prefix, such as `app`.
+- In a parallel worker of a delegating session, a function
+  whose `SET` clause sets the role,
+  `session_authorization` or a setting under a locked
+  prefix is refused with SQLSTATE 42501, before the switch
+  too, since the worker cannot see the lock. Other `SET`
+  clauses work, and so does the same function run without
+  a worker.
+- On PostgreSQL 16 and later, a request that may have
+  created a setting under a locked prefix, such as a
+  PL/pgSQL assignment from `set_config()`, makes the next
+  switch on the connection look over every setting the
+  session has. That takes longer the more settings the
+  session has, about 17 ms with 50,000.
+- A setting stays held in a session after its prefix is
+  removed from the list, unless the list is made empty,
+  which releases every held setting. New sessions follow
+  the new list.
 
 ### Superuser Exemption
 

@@ -11,10 +11,15 @@ An SUSET GUC is used to define the PostgreSQL roles to which read-only
 enforcement is applied. Any session for a role that is, or has membership of,
 a role specified in a comma delimited list in the GUC
 (pgedge_safesession.read_only_roles, or its old name roles) will have
-read-only operation enforced. A session of
-pgedge_safesession.delegating_roles is judged by the role it acts as. This
-will be achieved through the use of planner/executor hooks which will force
-the transaction into READ ONLY mode.
+read-only operation enforced. This will be achieved through the use of
+planner/executor hooks which will force the transaction into READ ONLY mode.
+
+A session of pgedge_safesession.delegating_roles is judged by the role it
+acts as, and may switch role only once per transaction: wrappers on
+PostgreSQL's own check and assign functions for role and
+session_authorization refuse a later change, and the settings under
+pgedge_safesession.locked_setting_prefixes are held once the switch
+statement ends.
 
 ## Guardrails
 

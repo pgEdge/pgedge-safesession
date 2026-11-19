@@ -20,7 +20,7 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_views safesession_rls safesession_domains \
           safesession_domainexec safesession_sequences \
           safesession_xproto safesession_delegating \
-          safesession_requirewhere
+          safesession_requirewhere safesession_rolelock
 REGRESS_OPTS = --inputdir=test
 TAP_TESTS = 1
 

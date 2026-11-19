@@ -18,10 +18,10 @@ for restricted roles.
   SECURITY DEFINER functions cannot escape restrictions
 - Delegating sessions: a pooled login role listed in
   `delegating_roles`, such as PostgREST's, is judged by the
-  role each request acts as. This release does not stop a
-  request from switching role again in the same transaction,
-  so do not turn on `delegating_roles` until a release that
-  locks the role
+  role each request acts as
+- Role lock: such a login role can switch role once per
+  transaction, and the request's settings, such as
+  PostgREST's claims, cannot change after the switch
 - Role membership inheritance: members of restricted roles
   are also restricted
 - Superuser exemption: superusers are never blocked, except

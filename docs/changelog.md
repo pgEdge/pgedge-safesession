@@ -30,7 +30,19 @@ and this project adheres to
   `delegating_roles`
 - `SET CONSTRAINTS` is allowed in read-only sessions
   (PostgREST sends it to roll a request back)
-- `pg_settings` lists the four new settings
+- A delegating session may switch role once in each
+  transaction. A later change of role in the same
+  transaction is refused with SQLSTATE 42501, which
+  PostgREST answers with 403, or 401 with no token (see
+  Role Lock)
+- `pgedge_safesession.locked_setting_prefixes` (default
+  `request`): after the role switch, the settings the
+  session already has under these prefixes cannot change
+  until the transaction ends
+- In a parallel worker of a delegating session, a function
+  whose `SET` clause sets the role or a setting under a
+  locked prefix is refused (see Role Lock)
+- `pg_settings` lists the five new settings
 
 ### Changed
 
