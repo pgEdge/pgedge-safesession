@@ -71,6 +71,8 @@ GRANT EXECUTE ON FUNCTION ss_lk_set_role() TO PUBLIC;
 CREATE FUNCTION ss_lk_definer() RETURNS text LANGUAGE sql SECURITY DEFINER
     AS $$ SELECT current_user::text $$;
 GRANT EXECUTE ON FUNCTION ss_lk_definer() TO PUBLIC;
+-- A fixed owner, so the output does not depend on who runs the tests
+ALTER FUNCTION ss_lk_definer() OWNER TO safesession_lk_admin;
 
 -- A function that rewrites the claims
 CREATE FUNCTION ss_lk_claims() RETURNS text LANGUAGE plpgsql AS $$
