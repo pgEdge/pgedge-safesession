@@ -921,7 +921,17 @@ query_has_blocked_function(Query *query)
     return query_has_blocked_function_walker((Node *) query, NULL);
 }
 
-static bool set_config_keeps_lock(FuncExpr *fexpr, List *prefixes);
+/*
+ * What the role lock reads from a plan being started; see
+ * set_config_keeps_lock(). name is set to a setting the plan would set
+ * that the lock forbids.
+ */
+typedef struct LockPlanRead
+{
+    const char *name;
+} LockPlanRead;
+
+static bool set_config_keeps_lock(FuncExpr *fexpr, LockPlanRead *read);
 
 /*
  * Would this expression stop set_config() being set up for its plan? Yes
@@ -946,7 +956,7 @@ expr_bars_set_config(Node *node, void *context)
         ((FuncExpr *) node)->funcid == F_SET_CONFIG &&
         !(context == NULL ?
           is_response_set_config((FuncExpr *) node) :
-          set_config_keeps_lock((FuncExpr *) node, (List *) context)))
+          set_config_keeps_lock((FuncExpr *) node, (LockPlanRead *) context)))
         return true;
 
     if (IsA(node, CoerceToDomain) ||
@@ -1659,9 +1669,14 @@ check_unchecked_plan(PlannedStmt *stmt)
 }
 
 /* The list lives in the transaction's memory; forget it when that goes. */
+static void recheck_request_settings(void);
+
 static void
 safesession_xact_callback(XactEvent event, void *arg)
 {
+    /* The role lock's last look, after deferred triggers and cursors */
+    if (event == XACT_EVENT_PRE_COMMIT || event == XACT_EVENT_PRE_PREPARE)
+        recheck_request_settings();
     if (event == XACT_EVENT_COMMIT || event == XACT_EVENT_ABORT ||
         event == XACT_EVENT_PREPARE ||
         event == XACT_EVENT_PARALLEL_COMMIT ||
@@ -1850,6 +1865,9 @@ check_where_for_session(Query *query)
     "cannot change role again after the role switch in this transaction"
 #define ROLE_LOCK_SETTINGS_MSG \
     "cannot change request settings after the role switch in this transaction"
+#define ROLE_LOCK_NEW_MSG \
+    "cannot set a new request setting after the role switch in this" \
+    " transaction"
 #define ROLE_LOCK_HINT \
     "pgedge_safesession lets a delegating role" \
     " (pgedge_safesession.delegating_roles) switch role once per" \
@@ -1858,6 +1876,13 @@ check_where_for_session(Query *query)
 
 static LocalTransactionId role_lock_lxid = InvalidLocalTransactionId;
 static Oid                role_lock_role = InvalidOid;
+/*
+ * Did the switch leave an explicit role set (SET ROLE x), not none? Postgres
+ * tells the two apart even for the same user, and so does the read-only
+ * rule for delegating sessions (current_role_is_restricted()), so a later
+ * change between them is a change of role too.
+ */
+static bool               role_lock_explicit = false;
 static int                role_lock_nest = 0;     /* subtransaction depth */
 static LocalTransactionId settings_lock_lxid = InvalidLocalTransactionId;
 
@@ -1963,6 +1988,17 @@ name_under_prefixes(const char *name, List *prefixes)
  * cheap and always done.
  */
 static List *noted_setting_names = NIL;     /* in TopMemoryContext */
+/* The settings SafeSession defined to hold them; in TopMemoryContext */
+static List *held_setting_names = NIL;
+/* The prefix list changed since the held settings' checks were set */
+static bool  held_checks_stale = false;
+/*
+ * The look for what the plan reading cannot see (see
+ * recheck_request_settings()), wanted in this transaction, and a new
+ * setting a savepoint that rolled back made.
+ */
+static bool  settings_recheck = false;
+static char  pending_new_setting[256] = "";
 static bool  settings_scanned = false;
 static bool  scan_every_lock = false;
 static bool  scan_next_lock = false;
@@ -1992,8 +2028,12 @@ get_locked_prefixes(void)
     old = MemoryContextSwitchTo(TopMemoryContext);
     locked_prefixes_value = pstrdup(safesession_locked_setting_prefixes);
     locked_prefixes_raw = pstrdup(safesession_locked_setting_prefixes);
-    /* The check hook made sure the list parses. */
-    (void) SplitIdentifierString(locked_prefixes_raw, ',', &locked_prefixes);
+    /*
+     * The check hook made sure the list parses. SplitGUCList, unlike
+     * SplitIdentifierString, keeps a name longer than an identifier whole, as
+     * setting names are.
+     */
+    (void) SplitGUCList(locked_prefixes_raw, ',', &locked_prefixes);
     MemoryContextSwitchTo(old);
     locked_prefixes_valid = true;
     return locked_prefixes;
@@ -2026,6 +2066,29 @@ static bool
 is_user_function(Oid funcid, void *context)
 {
     return funcid >= FirstNormalObjectId;
+}
+
+/*
+ * Does an argument of EXECUTE run code, such as a function call? A plain
+ * value becomes a parameter of the statement, read by
+ * note_pool_param_names(); anything else is evaluated before the statement
+ * starts, where no walk sees it.
+ */
+static bool
+execute_runs_code(ExecuteStmt *stmt)
+{
+    ListCell   *lc;
+
+    foreach(lc, stmt->params)
+    {
+        Node   *arg = lfirst(lc);
+
+        if (IsA(arg, TypeCast))
+            arg = ((TypeCast *) arg)->arg;
+        if (!IsA(arg, A_Const) && !IsA(arg, ParamRef))
+            return true;
+    }
+    return false;
 }
 
 /* Note what a statement run before the switch sets; see above. */
@@ -2073,8 +2136,13 @@ note_pool_settings(Node *node, void *context)
             if (IsA(stmt, VariableSetStmt) &&
                 ((VariableSetStmt *) stmt)->name != NULL)
                 note_setting_name(((VariableSetStmt *) stmt)->name);
-            /* Code this walk cannot see into */
-            else if (IsA(stmt, CallStmt) || IsA(stmt, DoStmt))
+            /*
+             * Code this walk cannot see into, and the arguments of EXECUTE,
+             * which are evaluated before the prepared statement starts
+             */
+            else if (IsA(stmt, CallStmt) || IsA(stmt, DoStmt) ||
+                     (IsA(stmt, ExecuteStmt) &&
+                      execute_runs_code((ExecuteStmt *) stmt)))
                 scan_every_lock = true;
             return false;
         }
@@ -2086,87 +2154,32 @@ note_pool_settings(Node *node, void *context)
 
 /*
  * A setting name passed as a parameter, as PostgREST passes the names of
- * the role's own settings: read it from the parameter's value, or from the
- * constant a custom plan put in its place. context is the statement's
- * parameters.
+ * the role's own settings. Which parameter holds a name is seen when the
+ * statement is parsed, but a plan can put it in many places (a LIMIT, a
+ * WHERE clause, a function in FROM), so the values of the statement's
+ * parameters are read instead, each one that names a setting under a
+ * locked prefix noted: that is all a name can be. A parameter fetched only
+ * when needed cannot be read here, so it asks for the full look.
  */
-static bool
-note_param_names_walker(Node *node, void *context)
-{
-    ParamListInfo params = (ParamListInfo) context;
-
-    if (node == NULL)
-        return false;
-    if (IsA(node, FuncExpr) && ((FuncExpr *) node)->funcid == F_SET_CONFIG)
-    {
-        Node   *name = linitial(((FuncExpr *) node)->args);
-
-        if (IsA(name, Const) && !((Const *) name)->constisnull)
-            note_setting_name(
-                TextDatumGetCString(((Const *) name)->constvalue));
-        else if (IsA(name, Param) &&
-                 ((Param *) name)->paramkind == PARAM_EXTERN)
-        {
-            int     id = ((Param *) name)->paramid;
-
-            if (params != NULL && params->paramFetch == NULL &&
-                id > 0 && id <= params->numParams)
-            {
-                ParamExternData *prm = &params->params[id - 1];
-
-                if (prm->isnull)
-                    ;           /* set_config() refuses a null name */
-                else if (prm->ptype == TEXTOID)
-                    note_setting_name(TextDatumGetCString(prm->value));
-                else
-                    scan_every_lock = true;
-            }
-            else
-                scan_every_lock = true;
-        }
-    }
-    return expression_tree_walker(node, note_param_names_walker, context);
-}
-
 static void
-note_plan_param_names(Plan *plan, ParamListInfo params)
+note_pool_param_names(ParamListInfo params)
 {
-    for (; plan != NULL; plan = plan->lefttree)
+    int     i;
+
+    if (params == NULL)
+        return;
+    if (params->paramFetch != NULL)
     {
-        switch (nodeTag(plan))
-        {
-            case T_SubqueryScan:
-                note_plan_param_names(((SubqueryScan *) plan)->subplan,
-                                      params);
-                break;
-            case T_Append:
-            case T_MergeAppend:
-            case T_BitmapAnd:
-            case T_BitmapOr:
-            case T_ModifyTable:
-            case T_CustomScan:
-                /* Children in lists, not read here */
-                scan_every_lock = true;
-                return;
-            default:
-                break;
-        }
-        (void) note_param_names_walker((Node *) plan->targetlist, params);
-        (void) note_param_names_walker((Node *) plan->qual, params);
-        if (plan->righttree != NULL)
-            note_plan_param_names(plan->righttree, params);
+        scan_every_lock = true;
+        return;
     }
-}
+    for (i = 0; i < params->numParams; i++)
+    {
+        ParamExternData *prm = &params->params[i];
 
-/* The plan, and its subplans: CTEs, and subqueries in expressions. */
-static void
-note_pool_param_names(PlannedStmt *pstmt, ParamListInfo params)
-{
-    ListCell   *lc;
-
-    note_plan_param_names(pstmt->planTree, params);
-    foreach(lc, pstmt->subplans)
-        note_plan_param_names((Plan *) lfirst(lc), params);
+        if (!prm->isnull && prm->ptype == TEXTOID)
+            note_setting_name(TextDatumGetCString(prm->value));
+    }
 }
 
 /*
@@ -2196,6 +2209,7 @@ assign_locked_setting_prefixes(const char *newval, void *extra)
         return;
     locked_prefixes_valid = false;
     settings_scanned = false;
+    held_checks_stale = true;
     list_free(plain_set_clause_oids);
     plain_set_clause_oids = NIL;
 }
@@ -2208,36 +2222,72 @@ unheld_locked_setting(struct config_generic *gen, List *prefixes)
         name_under_prefixes(gen->name, prefixes);
 }
 
-/*
- * Is this name under a locked prefix and not held yet? Such a name may be
- * created by setting it.
- */
+/* Did SafeSession define this setting to hold it? */
 static bool
-name_may_create_locked(const char *name)
+held_by_us(const char *name)
 {
-    int     flags;
+    ListCell *lc;
 
-    if (!list_is_set(safesession_locked_setting_prefixes) ||
-        !name_under_prefixes(name, get_locked_prefixes()))
-        return false;
-    flags = GetConfigOptionFlags(name, true);
-    return flags == 0 || (flags & GUC_CUSTOM_PLACEHOLDER);
+    foreach(lc, held_setting_names)
+        if (pg_strcasecmp(lfirst(lc), name) == 0)
+            return true;
+    return false;
 }
 
 /*
- * After the hold, may this set_config() call create a setting under a
- * locked prefix? Not when its name is written in it and is outside the
- * prefixes, such as response.status, or is held already.
+ * Is this name under a locked prefix but not held? It is either new, or a
+ * setting another extension defines. After the switch neither may be set.
  */
 static bool
-set_config_keeps_lock(FuncExpr *fexpr, List *prefixes)
+name_unheld_locked(const char *name)
+{
+    return list_is_set(safesession_locked_setting_prefixes) &&
+        name_under_prefixes(name, get_locked_prefixes()) &&
+        !held_by_us(name);
+}
+
+/* Refuse setting such a name after the switch. */
+static void
+refuse_unheld_locked(const char *name)
+{
+    /* A setting may be defined with no flags, so ask whether it exists */
+    if (GetConfigOption(name, true, false) != NULL &&
+        !(GetConfigOptionFlags(name, true) & GUC_CUSTOM_PLACEHOLDER))
+        ereport(ERROR,
+                (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                 errmsg(ROLE_LOCK_SETTINGS_MSG),
+                 errdetail("Setting \"%s\" is defined by another"
+                           " extension.", name),
+                 errhint("%s", ROLE_LOCK_HINT)));
+    ereport(ERROR,
+            (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+             errmsg(ROLE_LOCK_NEW_MSG),
+             errdetail("Setting \"%s\" is under a locked prefix but was not"
+                       " set before the switch.", name),
+             errhint("%s", ROLE_LOCK_HINT)));
+}
+
+/*
+ * After the hold, may this set_config() call run? Yes when its name is
+ * written in it and is outside the locked prefixes, such as
+ * response.status, or is held (the held setting's own check refuses the
+ * change). A name under a locked prefix that is not held is put in read;
+ * a name known only at run time cannot be judged here.
+ */
+static bool
+set_config_keeps_lock(FuncExpr *fexpr, LockPlanRead *read)
 {
     Node   *name = linitial(fexpr->args);
+    char   *setting;
 
-    return IsA(name, Const) && !((Const *) name)->constisnull &&
-        ((Const *) name)->consttype == TEXTOID &&
-        !name_may_create_locked(
-            TextDatumGetCString(((Const *) name)->constvalue));
+    if (!IsA(name, Const) || ((Const *) name)->constisnull ||
+        ((Const *) name)->consttype != TEXTOID)
+        return false;
+    setting = TextDatumGetCString(((Const *) name)->constvalue);
+    if (!name_unheld_locked(setting))
+        return true;
+    read->name = setting;
+    return false;
 }
 
 /*
@@ -2305,6 +2355,9 @@ hold_locked_settings(void)
 
     /* Defining a setting changes the list above, so do it after. */
     foreach(lc, names)
+    {
+        MemoryContext old;
+
         DefineCustomStringVariable(lfirst(lc),
                                    "A request setting held by"
                                    " pgedge_safesession.",
@@ -2316,6 +2369,11 @@ hold_locked_settings(void)
                                    GUC_NOT_IN_SAMPLE | GUC_NO_SHOW_ALL,
                                    check_request_setting,
                                    assign_request_setting, NULL);
+        old = MemoryContextSwitchTo(TopMemoryContext);
+        held_setting_names = lappend(held_setting_names,
+                                     pstrdup(lfirst(lc)));
+        MemoryContextSwitchTo(old);
+    }
     list_free_deep(names);
 
     /* A held name needs no look again. */
@@ -2334,6 +2392,89 @@ hold_locked_settings(void)
 }
 
 /*
+ * A setting under a locked prefix that SafeSession does not hold: a
+ * placeholder, or one another extension defines that this transaction
+ * changed. The hold takes every placeholder under the prefixes, so one
+ * there now was made after the switch. It stays after its value is undone,
+ * by a savepoint that rolled back or at the end of a command such as
+ * REFRESH MATERIALIZED VIEW, CREATE INDEX or ANALYZE, so it is found by
+ * being there, whatever its value.
+ */
+static bool
+unheld_locked_setting_changed(struct config_generic *gen, List *prefixes)
+{
+    if (!name_under_prefixes(gen->name, prefixes) || held_by_us(gen->name))
+        return false;
+    return (gen->flags & GUC_CUSTOM_PLACEHOLDER) || gen->stack != NULL;
+}
+
+/*
+ * The look. The plan reading in safesession_object_access() judges every
+ * set_config() call whose name is written in it, before it runs. A call it
+ * cannot judge, such as one with a name built at run time or one PL/pgSQL
+ * runs as an expression on its own (v := set_config(...)), asks for this
+ * look instead, for the rest of the transaction: at the end of each
+ * statement from the client and before COMMIT or PREPARE TRANSACTION, it
+ * looks over every setting for one under a locked prefix that is not held
+ * (see unheld_locked_setting_changed()), and refuses the transaction if it
+ * finds one. The statement that set it can read it, but the transaction is
+ * undone. Such a call costs a look over every setting each time, so a
+ * request should set response.status with PERFORM set_config(...).
+ */
+static void
+recheck_request_settings(void)
+{
+    struct config_generic **vars;
+    int         nvars;
+    int         i;
+    List       *prefixes;
+    char       *found = NULL;
+
+    if (!settings_recheck || !settings_lock_held())
+        return;
+    prefixes = get_locked_prefixes();
+#if PG_VERSION_NUM >= 160000
+    vars = get_guc_variables(&nvars);
+#else
+    vars = get_guc_variables();
+    nvars = GetNumConfigOptions();
+#endif
+    for (i = 0; i < nvars && found == NULL; i++)
+        if (unheld_locked_setting_changed(vars[i], prefixes))
+            found = pstrdup(vars[i]->name);
+#if PG_VERSION_NUM >= 160000
+    pfree(vars);
+#endif
+    if (found == NULL && pending_new_setting[0] != '\0')
+        found = pstrdup(pending_new_setting);
+    if (found != NULL)
+        refuse_unheld_locked(found);
+}
+
+/*
+ * After the prefix list changes, a held setting is held only while its name
+ * is still under a locked prefix: its check is turned on or off to match.
+ */
+static void
+sync_held_checks(void)
+{
+    List       *prefixes;
+    ListCell   *lc;
+
+    prefixes = list_is_set(safesession_locked_setting_prefixes) ?
+        get_locked_prefixes() : NIL;
+    foreach(lc, held_setting_names)
+    {
+        struct config_string *conf = core_string_setting(lfirst(lc));
+        bool        held = name_under_prefixes(lfirst(lc), prefixes);
+
+        conf->check_hook = held ? check_request_setting : NULL;
+        conf->assign_hook = held ? assign_request_setting : NULL;
+    }
+    held_checks_stale = false;
+}
+
+/*
  * A switch made inside a subtransaction that rolls back never happened:
  * the role is back to what it was, so the lock must go too, or the next
  * statement would be refused. One made inside a subtransaction that is
@@ -2346,6 +2487,43 @@ safesession_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
                              SubTransactionId parentSubid, void *arg)
 {
     int     level;
+
+    /*
+     * A setting another extension defines, changed inside a savepoint or an
+     * exception block that rolls back, is back to its old value by the time
+     * the look runs, though statements inside read the new one. A new name
+     * stays and is found, but this one leaves nothing behind. Postgres
+     * undoes it only after this callback, so note it now for the look. The
+     * subtransaction is aborting, so settings_lock_held(), which asks for a
+     * transaction in progress, is not used here.
+     */
+    if (event == SUBXACT_EVENT_ABORT_SUB && settings_recheck &&
+        pending_new_setting[0] == '\0' &&
+        settings_lock_lxid == current_lxid() &&
+        list_is_set(safesession_locked_setting_prefixes))
+    {
+        struct config_generic **vars;
+        int         nvars;
+        int         i;
+        List       *prefixes = get_locked_prefixes();
+
+#if PG_VERSION_NUM >= 160000
+        vars = get_guc_variables(&nvars);
+#else
+        vars = get_guc_variables();
+        nvars = GetNumConfigOptions();
+#endif
+        for (i = 0; i < nvars; i++)
+            if (unheld_locked_setting_changed(vars[i], prefixes))
+            {
+                strlcpy(pending_new_setting, vars[i]->name,
+                        sizeof(pending_new_setting));
+                break;
+            }
+#if PG_VERSION_NUM >= 160000
+        pfree(vars);
+#endif
+    }
 
     if (role_lock_lxid != current_lxid() || !OidIsValid(role_lock_role))
         return;
@@ -2361,10 +2539,29 @@ safesession_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
 
 /*
  * Postgres follows each change of session_authorization with a forced
- * change of role to none, the new session user. Set by the
- * session_authorization assign, and used up by the next role check.
+ * change of role: to none after SET SESSION AUTHORIZATION, and to the
+ * role's default (ALTER ROLE ... SET role, or none) after RESET. Set by the
+ * session_authorization assign, and used up by the next role check or
+ * assign: FORCED_ROLE_SAME when the lock was already taken, so the forced
+ * role may only be none for the same user; FORCED_ROLE_MOVE when this
+ * session_authorization change took the lock, so the forced role is part of
+ * the same first switch and the lock moves to it.
  */
-static bool sessauth_just_assigned = false;
+#define FORCED_ROLE_NONE 0
+#define FORCED_ROLE_SAME 1
+#define FORCED_ROLE_MOVE 2
+static int  sessauth_just_assigned = FORCED_ROLE_NONE;
+/*
+ * Is this transaction a delegating session's? Judged once, before its first
+ * change of role, from the session as it was then: a superuser not on
+ * delegating_roles that becomes a login that is, with SET SESSION
+ * AUTHORIZATION, stays unlocked for the transaction, so that changes back,
+ * and the ones Postgres makes when a function's SET clause ends, go through.
+ */
+static LocalTransactionId xact_judged_lxid = InvalidLocalTransactionId;
+static bool xact_delegating = false;
+/* A session_authorization change took the lock in this statement */
+static bool sessauth_took_lock = false;
 
 /*
  * May the acting role become the one named? name is a value of role or
@@ -2374,19 +2571,23 @@ static bool sessauth_just_assigned = false;
  * is_set is true for a new value, from SET, set_config() or a function's
  * SET clause, which passes the check. After the lock, a new value is
  * refused even when it names the locked role: one set for the whole
- * session would outlive the transaction. The one exception is the role
- * none that Postgres sets itself after session_authorization (forced_none).
- * Only the assign sees a value coming back, such as at the end of a
- * function with a SET clause, and a reset; those may only bring back the
- * locked role.
+ * session would outlive the transaction. The exception is the change of
+ * role Postgres makes itself after session_authorization (forced; see
+ * sessauth_just_assigned). Only the assign sees a value coming back, such
+ * as at the end of a function with a SET clause, and a reset; those may
+ * only bring back the locked role, and its state: a role set explicitly
+ * (role_guc and a name other than none) or none, which Postgres tells
+ * apart even for the same user.
  */
 static bool
-role_change_allowed(const char *name, bool is_set, bool forced_none)
+role_change_allowed(const char *name, bool is_set, bool role_guc,
+                    int forced)
 {
     Oid     userid;
     int     secctx;
     Oid     target;
     bool    locked;
+    bool    explicit_role;
 
     if (!delegating_configured())
         return true;
@@ -2404,11 +2605,21 @@ role_change_allowed(const char *name, bool is_set, bool forced_none)
     /*
      * Once locked, the transaction stays locked: a switch with SET SESSION
      * AUTHORIZATION changes the session user, which may make the session
-     * look like it is not delegating any more.
+     * look like it is not delegating any more. Before that, the transaction
+     * is judged once (see xact_delegating), from the session as it was at
+     * its first change of role.
      */
     locked = role_lock_lxid == current_lxid() && OidIsValid(role_lock_role);
-    if (!locked && !session_is_delegating())
-        return true;
+    if (!locked)
+    {
+        if (xact_judged_lxid != current_lxid())
+        {
+            xact_judged_lxid = current_lxid();
+            xact_delegating = session_is_delegating();
+        }
+        if (!xact_delegating)
+            return true;
+    }
     GetUserIdAndSecContext(&userid, &secctx);
     if (secctx & (SECURITY_LOCAL_USERID_CHANGE |
                   SECURITY_RESTRICTED_OPERATION))
@@ -2418,16 +2629,25 @@ role_change_allowed(const char *name, bool is_set, bool forced_none)
         GetSessionUserId() : get_role_oid(name, true);
     if (!OidIsValid(target))
         return true;            /* Postgres refuses an unknown role itself */
-    if (!locked)
+    /* session_authorization leaves no role set; role none neither */
+    explicit_role = role_guc && name != NULL && strcmp(name, "none") != 0;
+    if (!locked || forced == FORCED_ROLE_MOVE)
     {
         role_lock_lxid = current_lxid();
         role_lock_role = target;
-        role_lock_nest = GetCurrentTransactionNestLevel();
+        role_lock_explicit = explicit_role;
+        if (!locked)
+        {
+            role_lock_nest = GetCurrentTransactionNestLevel();
+            if (!role_guc)
+                sessauth_took_lock = true;
+        }
         return true;
     }
-    if (target != role_lock_role)
+    if (target != role_lock_role || explicit_role != role_lock_explicit)
         return false;
-    return !is_set || (forced_none && strcmp(name, "none") == 0);
+    return !is_set ||
+        (forced == FORCED_ROLE_SAME && strcmp(name, "none") == 0);
 }
 
 /*
@@ -2442,13 +2662,13 @@ static GucStringAssignHook prev_sessauth_assign = NULL;
 
 static bool
 role_lock_check(GucStringCheckHook prev, char **newval, void **extra,
-                GucSource source, bool forced_none)
+                GucSource source, bool role_guc, int forced)
 {
     if (prev != NULL && !prev(newval, extra, source))
         return false;
     /* SET, set_config() and a function's SET clause; not login defaults. */
     if (source != PGC_S_SESSION ||
-        role_change_allowed(*newval, true, forced_none))
+        role_change_allowed(*newval, true, role_guc, forced))
         return true;
     if (*extra != NULL)
     {
@@ -2477,9 +2697,10 @@ role_lock_check(GucStringCheckHook prev, char **newval, void **extra,
  * change.
  */
 static void
-role_lock_assign(GucStringAssignHook prev, const char *newval, void *extra)
+role_lock_assign(GucStringAssignHook prev, const char *newval, void *extra,
+                 bool role_guc, int forced)
 {
-    if (!role_change_allowed(newval, false, false))
+    if (!role_change_allowed(newval, false, role_guc, forced))
         role_lock_reject(ROLE_LOCK_ROLE_MSG);
     if (prev != NULL)
         prev(newval, extra);
@@ -2488,34 +2709,40 @@ role_lock_assign(GucStringAssignHook prev, const char *newval, void *extra)
 static bool
 safesession_check_role(char **newval, void **extra, GucSource source)
 {
-    bool    forced_none = sessauth_just_assigned;
+    int     forced = sessauth_just_assigned;
 
-    sessauth_just_assigned = false;
-    return role_lock_check(prev_role_check, newval, extra, source,
-                           forced_none);
+    sessauth_just_assigned = FORCED_ROLE_NONE;
+    return role_lock_check(prev_role_check, newval, extra, source, true,
+                           forced);
 }
 
 static void
 safesession_assign_role(const char *newval, void *extra)
 {
     /* A reset of session_authorization resets role with no check. */
-    sessauth_just_assigned = false;
-    role_lock_assign(prev_role_assign, newval, extra);
+    int     forced = sessauth_just_assigned;
+
+    sessauth_just_assigned = FORCED_ROLE_NONE;
+    role_lock_assign(prev_role_assign, newval, extra, true, forced);
 }
 
 static bool
 safesession_check_sessauth(char **newval, void **extra, GucSource source)
 {
-    sessauth_just_assigned = false;
+    sessauth_just_assigned = FORCED_ROLE_NONE;
+    sessauth_took_lock = false;
     return role_lock_check(prev_sessauth_check, newval, extra, source,
-                           false);
+                           false, FORCED_ROLE_NONE);
 }
 
 static void
 safesession_assign_sessauth(const char *newval, void *extra)
 {
-    role_lock_assign(prev_sessauth_assign, newval, extra);
-    sessauth_just_assigned = IsTransactionState();
+    role_lock_assign(prev_sessauth_assign, newval, extra, false,
+                     FORCED_ROLE_NONE);
+    sessauth_just_assigned = !IsTransactionState() ? FORCED_ROLE_NONE :
+        sessauth_took_lock ? FORCED_ROLE_MOVE : FORCED_ROLE_SAME;
+    sessauth_took_lock = false;
     /* A change of session user; see note_session_user(). */
     if (list_is_set(safesession_require_where_roles))
         ResetPlanCache();
@@ -2572,7 +2799,7 @@ set_clause_name(Oid funcid, bool roles, bool unheld_only)
                 (pg_strcasecmp(name, "role") == 0 ||
                  pg_strcasecmp(name, "session_authorization") == 0))
                 found = name;
-            else if (unheld_only ? name_may_create_locked(name) :
+            else if (unheld_only ? name_unheld_locked(name) :
                      (list_is_set(safesession_locked_setting_prefixes) &&
                       name_under_prefixes(name, get_locked_prefixes())))
                 found = name;
@@ -2602,11 +2829,20 @@ safesession_fmgr_hook(FmgrHookEventType event, FmgrInfo *flinfo, Datum *arg)
                             " parallel worker", name),
                      errhint("%s", ROLE_LOCK_HINT)));
     }
-    else if (settings_lock_held() && !scan_next_lock &&
+    else if (settings_lock_held() &&
              !list_member_oid(plain_set_clause_oids, flinfo->fn_oid))
     {
-        if (set_clause_name(flinfo->fn_oid, false, true) != NULL)
+        char   *name = set_clause_name(flinfo->fn_oid, false, true);
+
+        if (name != NULL)
+        {
+            /*
+             * Postgres has applied the clause, so the name now exists; the
+             * next lock holds it, as it would any setting the session has.
+             */
             note_request_may_create();
+            refuse_unheld_locked(name);
+        }
         else if (list_length(plain_set_clause_oids) <
                  MAX_PLAIN_SET_CLAUSE_OIDS)
         {
@@ -2633,7 +2869,8 @@ check_role_lock(void)
     int                 secctx;
     LocalTransactionId  lxid;
 
-    sessauth_just_assigned = false;
+    sessauth_just_assigned = FORCED_ROLE_NONE;
+    sessauth_took_lock = false;
     if (!IsTransactionState())
         return;
     lxid = current_lxid();
@@ -2644,13 +2881,18 @@ check_role_lock(void)
     GetUserIdAndSecContext(&userid, &secctx);
     if (!(secctx & (SECURITY_LOCAL_USERID_CHANGE |
                     SECURITY_RESTRICTED_OPERATION)) &&
-        userid != role_lock_role)
+        (userid != role_lock_role ||
+         OidIsValid(GetCurrentRoleId()) != role_lock_explicit))
         role_lock_reject(ROLE_LOCK_ROLE_MSG);
 
     if (settings_lock_lxid != lxid && exec_nesting_level == 0)
     {
+        if (held_checks_stale)
+            sync_held_checks();
         hold_locked_settings();
         settings_lock_lxid = lxid;
+        settings_recheck = false;
+        pending_new_setting[0] = '\0';
     }
 }
 
@@ -2735,7 +2977,7 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     if (pool_param_names && IsTransactionState() &&
         (role_lock_lxid != current_lxid() || !OidIsValid(role_lock_role)) &&
         delegating_configured() && session_is_delegating())
-        note_pool_param_names(queryDesc->plannedstmt, queryDesc->params);
+        note_pool_param_names(queryDesc->params);
 
     /*
      * Only consult the catalog (the role lookups in
@@ -2876,7 +3118,10 @@ safesession_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
     PG_END_TRY();
 
     if (exec_nesting_level == 0)
+    {
         check_role_lock();
+        recheck_request_settings();
+    }
 }
 
 static void
@@ -2895,6 +3140,13 @@ safesession_ExecutorFinish(QueryDesc *queryDesc)
         exec_nesting_level--;
     }
     PG_END_TRY();
+
+    /* AFTER triggers run here, after the outermost ExecutorRun */
+    if (exec_nesting_level == 0)
+    {
+        check_role_lock();
+        recheck_request_settings();
+    }
 }
 
 /*
@@ -3100,15 +3352,25 @@ safesession_object_access(ObjectAccessType access, Oid classId,
 
     /*
      * Every set_config() call is set up first, which runs this hook. After
-     * the hold, one that may create a setting under a locked prefix is
-     * noted; reading the plan being started tells, as above.
+     * the hold, the plan being started is read, as above: a call that would
+     * set a name under a locked prefix that is not held is refused before
+     * it runs, and one whose name the plan does not show asks for the look
+     * (recheck_request_settings()).
      */
     if (access == OAT_FUNCTION_EXECUTE && objectId == F_SET_CONFIG &&
-        !scan_next_lock && settings_lock_held() &&
-        (starting_query == NULL ||
-         !plan_allows_set_config(starting_query->plannedstmt,
-                                 get_locked_prefixes())))
-        note_request_may_create();
+        settings_lock_held())
+    {
+        LockPlanRead read = {NULL};
+
+        if (starting_query == NULL ||
+            !plan_allows_set_config(starting_query->plannedstmt, &read))
+        {
+            if (read.name != NULL)
+                refuse_unheld_locked(read.name);
+            settings_recheck = true;
+            note_request_may_create();
+        }
+    }
 
     if (access != OAT_FUNCTION_EXECUTE ||
         !safesession_block_c_functions ||
@@ -3470,6 +3732,61 @@ execute_params_have_blocked_function(ExecuteStmt *stmt,
 }
 
 /*
+ * After the hold, a utility statement that would set a setting under a
+ * locked prefix that is not held: SET, SET LOCAL or RESET of one, and
+ * those that check a setting by setting it as a test, which creates it
+ * too: a function's SET clause in CREATE or ALTER FUNCTION, and ALTER
+ * ROLE, ALTER DATABASE or ALTER SYSTEM ... SET. A held setting's own check
+ * refuses a change to it. RESET ALL would reset held settings, and
+ * another extension's, so it is refused while settings are held.
+ */
+static void
+refuse_unheld_set(VariableSetStmt *stmt, bool top_level)
+{
+    if (stmt == NULL)
+        return;
+    if (top_level && stmt->kind == VAR_RESET_ALL &&
+        list_is_set(safesession_locked_setting_prefixes))
+        ereport(ERROR,
+                (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                 errmsg(ROLE_LOCK_SETTINGS_MSG),
+                 errdetail("RESET ALL would reset them."),
+                 errhint("%s", ROLE_LOCK_HINT)));
+    if (stmt->name != NULL && name_unheld_locked(stmt->name))
+        refuse_unheld_locked(stmt->name);
+}
+
+static void
+refuse_unheld_in_utility(Node *parsetree)
+{
+    List       *options = NIL;
+    ListCell   *lc;
+
+    if (IsA(parsetree, VariableSetStmt))
+        refuse_unheld_set((VariableSetStmt *) parsetree, true);
+    else if (IsA(parsetree, AlterRoleSetStmt))
+        refuse_unheld_set(((AlterRoleSetStmt *) parsetree)->setstmt, false);
+    else if (IsA(parsetree, AlterDatabaseSetStmt))
+        refuse_unheld_set(((AlterDatabaseSetStmt *) parsetree)->setstmt,
+                          false);
+    else if (IsA(parsetree, AlterSystemStmt))
+        refuse_unheld_set(((AlterSystemStmt *) parsetree)->setstmt, false);
+    else if (IsA(parsetree, CreateFunctionStmt))
+        options = ((CreateFunctionStmt *) parsetree)->options;
+    else if (IsA(parsetree, AlterFunctionStmt))
+        options = ((AlterFunctionStmt *) parsetree)->actions;
+
+    foreach(lc, options)
+    {
+        DefElem    *opt = lfirst(lc);
+
+        if (strcmp(opt->defname, "set") == 0 && opt->arg != NULL &&
+            IsA(opt->arg, VariableSetStmt))
+            refuse_unheld_set((VariableSetStmt *) opt->arg, false);
+    }
+}
+
+/*
  * ProcessUtility hook: block DDL and other write operations.
  *
  * This hook is fail-closed: the switch below allows an explicit set of
@@ -3519,22 +3836,9 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     if (!is_xact)
         check_role_lock();
 
-    /*
-     * After the hold, a statement that may create a setting under a locked
-     * prefix: SET or RESET of one the session does not hold, and those that
-     * check a SET clause or a setting by setting it as a test, which
-     * creates it too. See note_request_may_create().
-     */
-    if (parsetree != NULL && !scan_next_lock && settings_lock_held() &&
-        ((IsA(parsetree, VariableSetStmt) &&
-          ((VariableSetStmt *) parsetree)->name != NULL &&
-          name_may_create_locked(((VariableSetStmt *) parsetree)->name)) ||
-         IsA(parsetree, CreateFunctionStmt) ||
-         IsA(parsetree, AlterFunctionStmt) ||
-         IsA(parsetree, AlterRoleSetStmt) ||
-         IsA(parsetree, AlterDatabaseSetStmt) ||
-         IsA(parsetree, AlterSystemStmt)))
-        note_request_may_create();
+    /* After the hold; see refuse_unheld_in_utility() */
+    if (parsetree != NULL && settings_lock_held())
+        refuse_unheld_in_utility(parsetree);
 
     /*
      * This hook runs for every utility statement, including COMMIT
@@ -3819,7 +4123,11 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
 
     /* SET ROLE, or a statement that switched: hold the settings now. */
     if (!is_xact)
+    {
         check_role_lock();
+        if (exec_nesting_level == 0)
+            recheck_request_settings();
+    }
 
     /*
      * Some utility statements change who we are acting as, and therefore
@@ -3966,7 +4274,8 @@ check_locked_setting_prefixes(char **newval, void **extra, GucSource source)
     if (*newval == NULL || (*newval)[0] == '\0')
         return true;
     rawstring = pstrdup(*newval);
-    ok = SplitIdentifierString(rawstring, ',', &prefixes);
+    /* Not cut to an identifier's length; see get_locked_prefixes(). */
+    ok = SplitGUCList(rawstring, ',', &prefixes);
     if (ok)
         foreach(lc, prefixes)
             if (!valid_prefix(lfirst(lc)))

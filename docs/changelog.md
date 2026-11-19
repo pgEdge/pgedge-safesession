@@ -38,7 +38,9 @@ and this project adheres to
 - `pgedge_safesession.locked_setting_prefixes` (default
   `request`): after the role switch, the settings the
   session already has under these prefixes cannot change
-  until the transaction ends
+  until the transaction ends, and no other setting under
+  them can be set, whether new or defined by another
+  extension
 - In a parallel worker of a delegating session, a function
   whose `SET` clause sets the role or a setting under a
   locked prefix is refused (see Role Lock)

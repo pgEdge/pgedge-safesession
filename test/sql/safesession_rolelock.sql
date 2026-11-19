@@ -342,8 +342,8 @@ SELECT ss_lk_try('SELECT set_config(''request.header.x_a'', ''y'', true)');
 COMMIT;
 DEALLOCATE ss_lk_switch;
 
--- A request setting a request creates itself is held from the next
--- request on the connection, like any other the session has
+-- A request cannot create a request setting of its own after the switch,
+-- in this request or a later one
 BEGIN;
 SELECT set_config('role', 'safesession_lk_user', true);
 SELECT ss_lk_try('SELECT set_config(''request.own'', ''1'', true)');
@@ -388,72 +388,74 @@ DROP FUNCTION ss_lk_par_claims();
 DROP FUNCTION ss_lk_par_ok();
 
 -------------------------------------------------------------------------
--- Test 12: however a request creates a request setting, it is held from
--- the next request on: through a view, a SQL-standard function body, a
--- name built at run time, a function's SET clause and SET LOCAL. A new
--- connection starts without the settings these functions name.
+-- Test 12: after the switch, a request cannot create a setting under a
+-- locked prefix that the pool did not set, however it tries, so a policy
+-- that reads such a name, such as an older PostgREST claim, cannot be
+-- fooled. A name built at run time is caught when the statement ends, also
+-- when a savepoint that rolled back made it.
 -------------------------------------------------------------------------
-CREATE VIEW ss_lk_view AS SELECT set_config('request.via_view', '1', true);
+CREATE TABLE ss_lk_orgs (org text);
+INSERT INTO ss_lk_orgs VALUES ('a'), ('b');
+ALTER TABLE ss_lk_orgs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY ss_lk_org ON ss_lk_orgs FOR SELECT
+    USING (org = current_setting('request.jwt.claim.org', true));
+GRANT SELECT ON ss_lk_orgs TO safesession_lk_user;
+CREATE VIEW ss_lk_view AS
+    SELECT set_config('request.jwt.claim.org', 'b', true);
 CREATE FUNCTION ss_lk_body() RETURNS text LANGUAGE sql
-    RETURN set_config('request.via_body', '1', true);
+    RETURN set_config('request.jwt.claim.org', 'b', true);
 CREATE FUNCTION ss_lk_clause() RETURNS text LANGUAGE sql
-    SET request.via_clause = '1' AS $$ SELECT 'x' $$;
+    SET request.jwt.claim.org = 'b' AS $$ SELECT 'x' $$;
 CREATE FUNCTION ss_lk_dyn(n text) RETURNS text LANGUAGE plpgsql AS $$
 BEGIN
-    RETURN set_config('request.' || n, '1', true);
+    RETURN set_config('request.' || n, 'b', true);
 END $$;
 GRANT SELECT ON ss_lk_view TO PUBLIC;
 GRANT EXECUTE ON FUNCTION ss_lk_body(), ss_lk_clause(), ss_lk_dyn(text)
     TO PUBLIC;
+-- A new connection, without the setting creating ss_lk_clause made
 \c
 SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
 SET SESSION AUTHORIZATION safesession_lk_auth;
--- Each request creates one setting; the next request may not change it
 BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SELECT * FROM ss_lk_view;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT x AS how, ss_lk_try(x) AS result FROM unnest(ARRAY[
+    'SELECT set_config(''request.jwt.claim.org'', ''b'', true)',
+    'SET LOCAL request.jwt.claim.org = ''b''',
+    'SET request.jwt.claim.org = ''b''',
+    'RESET request.jwt.claim.org',
+    'SELECT * FROM ss_lk_view',
+    'SELECT ss_lk_body()',
+    'SELECT ss_lk_clause()',
+    'CREATE FUNCTION ss_lk_made() RETURNS int LANGUAGE sql'
+        || ' SET request.jwt.claim.org = ''b'' AS $f$ SELECT 1 $f$',
+    'ALTER ROLE safesession_lk_user SET request.jwt.claim.org = ''b''',
+    'RESET ALL']) AS x;
+SELECT count(*) AS orgs_seen FROM ss_lk_orgs;
 COMMIT;
+\set SHOW_CONTEXT never
 BEGIN;
 SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_try('SELECT set_config(''request.via_view'', ''2'', true)');
-COMMIT;
+SELECT ss_lk_dyn('jwt.claim.dept');
+ROLLBACK;
 BEGIN;
 SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_body();
-COMMIT;
+SELECT ss_lk_try('SELECT ss_lk_dyn(''jwt.claim.team''),'
+                 || ' 1 / (random() * 0)::int');
+ROLLBACK;
+\set SHOW_CONTEXT errors
+-- The next request works
 BEGIN;
 SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_try('SELECT set_config(''request.via_body'', ''2'', true)');
-COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_dyn('via_dyn');
-COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_try('SELECT set_config(''request.via_dyn'', ''2'', true)');
-COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_clause();
-COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_try('SELECT set_config(''request.via_clause'', ''2'', true)');
-COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SET LOCAL request.via_set = '1';
-COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_lk_user', true);
-SELECT ss_lk_try('SELECT set_config(''request.via_set'', ''2'', true)');
+SELECT count(*) AS orgs_seen FROM ss_lk_orgs;
 COMMIT;
 RESET SESSION AUTHORIZATION;
 DROP VIEW ss_lk_view;
 DROP FUNCTION ss_lk_body();
 DROP FUNCTION ss_lk_clause();
 DROP FUNCTION ss_lk_dyn(text);
+DROP TABLE ss_lk_orgs;
 RESET pgedge_safesession.delegating_roles;
 
 -------------------------------------------------------------------------
@@ -492,6 +494,210 @@ COMMIT;
 DEALLOCATE ss_lk_cte;
 RESET SESSION AUTHORIZATION;
 DROP VIEW ss_lk_pool_view;
+RESET pgedge_safesession.delegating_roles;
+
+-------------------------------------------------------------------------
+-- Test 14: a switch into the login role itself leaves that role set
+-- explicitly, and the lock keeps it so: going back to no role would make
+-- the request look like the pool's own statement, which is not read-only.
+-------------------------------------------------------------------------
+CREATE ROLE safesession_lk_ro NOLOGIN;
+GRANT safesession_lk_ro TO safesession_lk_auth;
+SET pgedge_safesession.read_only_roles = 'safesession_lk_ro';
+SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_auth', true);
+SELECT ss_lk_try('RESET ROLE');
+SELECT pgedge_safesession_is_restricted() AS read_only;
+COMMIT;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_auth', true),
+       set_config('role', NULL, true);
+ROLLBACK;
+RESET SESSION AUTHORIZATION;
+RESET pgedge_safesession.read_only_roles;
+RESET pgedge_safesession.delegating_roles;
+DROP ROLE safesession_lk_ro;
+
+-------------------------------------------------------------------------
+-- Test 15: a superuser pool whose login sets a role, here with a
+-- connection option, can switch with RESET SESSION AUTHORIZATION: Postgres
+-- then sets the login's role again, as part of the same switch.
+-------------------------------------------------------------------------
+SELECT format('-c role=safesession_lk_user'
+              ' -c pgedge_safesession.delegating_roles=%s',
+              quote_ident(current_user)) AS ss_lk_options,
+       format('dbname=%s', current_database()) AS ss_lk_db \gset
+\setenv PGOPTIONS :ss_lk_options
+\c -reuse-previous=off :ss_lk_db
+SELECT current_user;
+BEGIN;
+RESET SESSION AUTHORIZATION;
+SELECT current_user;
+SELECT ss_lk_try('SET ROLE NONE');
+COMMIT;
+\setenv PGOPTIONS
+\c -reuse-previous=off :ss_lk_db
+
+-------------------------------------------------------------------------
+-- Test 16: the prefix list decides what is held on a connection that is
+-- reused after it changes, and a long prefix is kept whole.
+-------------------------------------------------------------------------
+SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT ss_lk_try('SELECT set_config(''request.jwt.claims'', ''x'', true)');
+COMMIT;
+RESET SESSION AUTHORIZATION;
+SET pgedge_safesession.locked_setting_prefixes = 'jwt';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT ss_lk_try('SELECT set_config(''request.jwt.claims'', ''x'', true)');
+COMMIT;
+RESET SESSION AUTHORIZATION;
+RESET pgedge_safesession.locked_setting_prefixes;
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT ss_lk_try('SELECT set_config(''request.jwt.claims'', ''x'', true)');
+COMMIT;
+RESET SESSION AUTHORIZATION;
+SELECT 'ss' || repeat('x', 68) AS ss_lk_long \gset
+SELECT 'request, ' || :'ss_lk_long' AS ss_lk_prefixes,
+       :'ss_lk_long' || '.claims' AS ss_lk_long_name \gset
+SET pgedge_safesession.locked_setting_prefixes = :'ss_lk_prefixes';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config(:'ss_lk_long_name', 'a', true) IS NOT NULL AS long_set;
+SELECT ss_lk_try(format('SELECT set_config(%L, %L, true)',
+                        :'ss_lk_long_name', 'b'));
+COMMIT;
+RESET SESSION AUTHORIZATION;
+RESET pgedge_safesession.locked_setting_prefixes;
+
+-------------------------------------------------------------------------
+-- Test 17: a request setting the pool sets with its name as a parameter
+-- that only a LIMIT uses, or in an argument of EXECUTE, is held too.
+-------------------------------------------------------------------------
+SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+PREPARE ss_lk_lim(text, text) AS
+    SELECT set_config('role', 'safesession_lk_user', true)
+    LIMIT (SELECT 1 WHERE set_config($1, $2, true) IS NOT NULL);
+BEGIN;
+EXECUTE ss_lk_lim('request.lim', 'v');
+SELECT ss_lk_try('SELECT set_config(''request.lim'', ''x'', true)');
+COMMIT;
+PREPARE ss_lk_arg(text) AS
+    SELECT set_config('role', 'safesession_lk_user', true), $1 AS arg;
+BEGIN;
+EXECUTE ss_lk_arg(set_config('request.arg', 'v', true));
+SELECT ss_lk_try('SELECT set_config(''request.arg'', ''x'', true)');
+COMMIT;
+DEALLOCATE ss_lk_lim;
+DEALLOCATE ss_lk_arg;
+RESET SESSION AUTHORIZATION;
+
+-------------------------------------------------------------------------
+-- Test 18: a setting another extension defines under a locked prefix
+-- cannot be changed after the switch either.
+-------------------------------------------------------------------------
+-- PL/pgSQL, loaded by the functions above, defines plpgsql.* settings
+SET pgedge_safesession.locked_setting_prefixes = 'request, plpgsql';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_try('SET LOCAL plpgsql.extra_warnings = ''all''');
+SELECT ss_lk_try('SELECT set_config(''plpgsql.extra_warnings'','
+                 || ' ''all'', true)');
+SELECT current_setting('plpgsql.extra_warnings') AS extra_warnings;
+COMMIT;
+RESET SESSION AUTHORIZATION;
+RESET pgedge_safesession.locked_setting_prefixes;
+RESET pgedge_safesession.delegating_roles;
+
+-------------------------------------------------------------------------
+-- Test 19: a request setting made with a name built at run time where
+-- PostgreSQL undoes it before the end of the statement, inside CREATE
+-- INDEX, is still found when the statement ends, also when the function
+-- already ran in the request; so is one an AFTER trigger makes. A
+-- function with a SET clause can still set response.status that way. A
+-- superuser not on delegating_roles that becomes the pool's login with
+-- SET SESSION AUTHORIZATION is not locked.
+-------------------------------------------------------------------------
+CREATE FUNCTION ss_lk_forge(name text, n int) RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE v text;
+BEGIN
+    v := set_config(name, 'x', true);
+    RETURN n;
+END $$;
+CREATE FUNCTION ss_lk_status() RETURNS text LANGUAGE plpgsql
+    SECURITY DEFINER SET search_path = public AS $$
+DECLARE v text;
+BEGIN
+    v := set_config('response.' || 'status', '201', true);
+    RETURN v;
+END $$;
+CREATE SCHEMA ss_lk_s AUTHORIZATION safesession_lk_user;
+CREATE TABLE ss_lk_s.ss_lk_own (id int);
+INSERT INTO ss_lk_s.ss_lk_own VALUES (1);
+ALTER TABLE ss_lk_s.ss_lk_own OWNER TO safesession_lk_user;
+CREATE FUNCTION ss_lk_after() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v text;
+BEGIN
+    v := set_config('request.' || 'after', 'x', true);
+    RETURN NULL;
+END $$;
+CREATE TRIGGER ss_lk_after AFTER INSERT ON ss_lk_s.ss_lk_own
+    FOR EACH ROW EXECUTE FUNCTION ss_lk_after();
+GRANT EXECUTE ON FUNCTION ss_lk_forge(text, int), ss_lk_after(),
+    ss_lk_status() TO PUBLIC;
+SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+\set SHOW_CONTEXT never
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+CREATE INDEX ON ss_lk_s.ss_lk_own
+    ((public.ss_lk_forge('request.' || 'forged', id)));
+ROLLBACK;
+-- The function runs first with a harmless name, so PL/pgSQL keeps its
+-- set_config() expression for the index build
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SET LOCAL search_path = pg_catalog, pg_temp;
+SELECT public.ss_lk_forge('response.' || 'status', 0) AS primed;
+CREATE INDEX ON ss_lk_s.ss_lk_own
+    ((public.ss_lk_forge('request.' || 'primed', id)));
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_status() AS status;
+COMMIT;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+INSERT INTO ss_lk_s.ss_lk_own VALUES (2);
+ROLLBACK;
+\set SHOW_CONTEXT errors
+RESET SESSION AUTHORIZATION;
+SELECT count(*) AS own_rows FROM ss_lk_s.ss_lk_own;
+BEGIN;
+SET LOCAL SESSION AUTHORIZATION safesession_lk_auth;
+RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION safesession_lk_auth;
+SELECT current_user;
+COMMIT;
+DROP SCHEMA ss_lk_s CASCADE;
+DROP FUNCTION ss_lk_forge(text, int);
+DROP FUNCTION ss_lk_after();
+DROP FUNCTION ss_lk_status();
 RESET pgedge_safesession.delegating_roles;
 
 -- Cleanup
