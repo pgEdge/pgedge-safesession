@@ -207,7 +207,13 @@ whole table.
   role it creates does not count.
 - A read-only session's `UPDATE` or `DELETE` gets the
   read-only error instead, which PostgREST answers with
-  405.
+  405. It is refused as soon as it is parsed or planned, so
+  no unchecked plan is kept for later, once the session can
+  write.
+- A cached plan is checked again when the setting, a role's
+  memberships, the database's owner or the session user
+  changes, even a change of session user made in the middle
+  of a statement with `set_config()`.
 - Any `WHERE` clause counts, even `WHERE true`. This
   guards against mistakes; row-level security still
   decides which rows a request can change.

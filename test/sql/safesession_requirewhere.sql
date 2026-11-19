@@ -30,6 +30,9 @@ DROP ROLE IF EXISTS safesession_rw_other;
 DROP ROLE IF EXISTS safesession_rw_owner;
 DROP ROLE IF EXISTS safesession_rw_made;
 DROP ROLE IF EXISTS safesession_rw_admin;
+DROP ROLE IF EXISTS safesession_rw_pool;
+DROP ROLE IF EXISTS safesession_rw_ro;
+DROP ROLE IF EXISTS safesession_rw_wr;
 
 CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 
@@ -276,6 +279,68 @@ RESET plan_cache_mode;
 RESET SESSION AUTHORIZATION;
 DROP FUNCTION rw_set_owner(text);
 
+-------------------------------------------------------------------------
+-- Test 11: in a delegating session, an unfiltered UPDATE or DELETE made
+-- while the acting role is read-only is refused at once, with the
+-- read-only error, so no unchecked plan is left to run after a switch to
+-- a role that can write. A filtered one still works there.
+-------------------------------------------------------------------------
+CREATE ROLE safesession_rw_pool LOGIN NOINHERIT;
+CREATE ROLE safesession_rw_ro NOLOGIN;
+CREATE ROLE safesession_rw_wr NOLOGIN;
+GRANT safesession_rw_ro, safesession_rw_wr TO safesession_rw_pool;
+GRANT ALL ON rw_items TO safesession_rw_ro, safesession_rw_wr;
+SET pgedge_safesession.require_where_roles = 'safesession_rw_pool';
+SET pgedge_safesession.delegating_roles = 'safesession_rw_pool';
+SET pgedge_safesession.acting_read_only_roles = 'safesession_rw_ro';
+SET plan_cache_mode = force_generic_plan;
+SET SESSION AUTHORIZATION safesession_rw_pool;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_ro', true);
+PREPARE rw_ro_all AS DELETE FROM rw_items;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_ro', true);
+PREPARE rw_ro_one AS DELETE FROM rw_items WHERE id = 1;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_wr', true);
+EXECUTE rw_ro_all;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_wr', true);
+EXECUTE rw_ro_one;
+ROLLBACK;
+DEALLOCATE rw_ro_one;
+RESET SESSION AUTHORIZATION;
+RESET plan_cache_mode;
+RESET pgedge_safesession.acting_read_only_roles;
+RESET pgedge_safesession.delegating_roles;
+
+-------------------------------------------------------------------------
+-- Test 12: a change of session user in the middle of a statement, from
+-- set_config(), discards cached plans before anything else runs, so a
+-- plan cached under a session user that is not covered is checked again.
+-------------------------------------------------------------------------
+CREATE FUNCTION rw_del_arg(x text) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM rw_items;
+    RETURN 'deleted';
+END $$;
+SET pgedge_safesession.require_where_roles = 'safesession_rw_login';
+SET plan_cache_mode = force_generic_plan;
+BEGIN;
+SELECT rw_del_arg('as a superuser');
+ROLLBACK;
+\set SHOW_CONTEXT never
+BEGIN;
+SELECT rw_del_arg(set_config('session_authorization',
+                             'safesession_rw_login', true));
+ROLLBACK;
+\set SHOW_CONTEXT errors
+RESET plan_cache_mode;
+DROP FUNCTION rw_del_arg(text);
+
 -- Cleanup
 RESET pgedge_safesession.require_where_roles;
 SELECT * FROM rw_items ORDER BY id;
@@ -293,4 +358,7 @@ DROP ROLE safesession_rw_other;
 DROP ROLE safesession_rw_owner;
 DROP ROLE safesession_rw_made;
 DROP ROLE safesession_rw_admin;
+DROP ROLE safesession_rw_pool;
+DROP ROLE safesession_rw_ro;
+DROP ROLE safesession_rw_wr;
 DROP EXTENSION pgedge_safesession;

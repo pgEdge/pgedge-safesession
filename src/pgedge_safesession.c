@@ -1486,6 +1486,50 @@ note_session_user(void)
 }
 
 /*
+ * The session user changes when session_authorization is set, which can
+ * happen in the middle of a statement, from set_config(). A plan cached
+ * under another session user could then run next, unchecked. So wrap
+ * Postgres's own assign function for session_authorization and discard
+ * cached plans whenever it runs while require_where_roles is set: a cached
+ * UPDATE or DELETE is then planned, and checked, again before it runs.
+ */
+static GucStringAssignHook prev_sessauth_assign = NULL;
+
+static void
+safesession_assign_sessauth(const char *newval, void *extra)
+{
+    if (prev_sessauth_assign != NULL)
+        prev_sessauth_assign(newval, extra);
+    if (list_is_set(safesession_require_where_roles))
+        ResetPlanCache();
+}
+
+/* Postgres's own string setting, to wrap its check and assign. */
+static struct config_string *
+core_string_setting(const char *name)
+{
+    struct config_generic *gen = NULL;
+#if PG_VERSION_NUM >= 160000
+    gen = find_option(name, false, false, ERROR);
+#else
+    struct config_generic **vars = get_guc_variables();
+    int         i;
+
+    for (i = 0; i < GetNumConfigOptions(); i++)
+        if (strcmp(vars[i]->name, name) == 0)
+            gen = vars[i];
+#endif
+    if (gen == NULL || gen->vartype != PGC_STRING)
+        elog(ERROR, "pgedge_safesession: setting \"%s\" not found", name);
+#if PG_VERSION_NUM >= 190000
+    /* PostgreSQL 19 moved the type's fields into a union in config_generic. */
+    return &gen->_string;
+#else
+    return (struct config_string *) gen;
+#endif
+}
+
+/*
  * Refuse an UPDATE or DELETE with no WHERE clause, the check pg-safeupdate
  * makes, including inside data-modifying WITH queries. The SQLSTATE and
  * the messages match safeupdate's, so PostgREST and its clients see no
@@ -1497,28 +1541,42 @@ note_session_user(void)
  * own WHERE does not count, and again from the planner hook, because a
  * BEGIN ATOMIC function body is stored already analysed and is planned
  * but never parsed again. MERGE and TRUNCATE are not covered.
+ *
+ * In a read-only session such a statement could never run, and it is
+ * refused with the read-only error instead, which PostgREST answers with
+ * 405 rather than 400. It is still refused here, not left to the executor:
+ * otherwise its plan could be cached unchecked and run later, once the
+ * session can write.
  */
 static void
-check_where_required(Query *query)
+check_where_required(Query *query, bool restricted)
 {
     ListCell *lc;
+    const char *cmd;
 
     foreach(lc, query->cteList)
     {
         CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
 
         if (IsA(cte->ctequery, Query))
-            check_where_required((Query *) cte->ctequery);
+            check_where_required((Query *) cte->ctequery, restricted);
     }
 
-    if ((query->commandType == CMD_UPDATE ||
-         query->commandType == CMD_DELETE) &&
-        query->jointree != NULL && query->jointree->quals == NULL)
+    if ((query->commandType != CMD_UPDATE &&
+         query->commandType != CMD_DELETE) ||
+        query->jointree == NULL || query->jointree->quals != NULL)
+        return;
+
+    cmd = query->commandType == CMD_UPDATE ? "UPDATE" : "DELETE";
+    if (restricted)
         ereport(ERROR,
-                (errcode(ERRCODE_CARDINALITY_VIOLATION),
-                 errmsg("%s requires a WHERE clause",
-                        query->commandType == CMD_UPDATE ?
-                        "UPDATE" : "DELETE")));
+                (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                 errmsg("cannot execute %s in a read-only session", cmd),
+                 errhint("This session is restricted to read-only access"
+                         " by the pgedge_safesession extension.")));
+    ereport(ERROR,
+            (errcode(ERRCODE_CARDINALITY_VIOLATION),
+             errmsg("%s requires a WHERE clause", cmd)));
 }
 
 /*
@@ -1657,9 +1715,8 @@ current_role_is_restricted(void)
  *
  * The session user is noted first, so a plan made under one session user
  * is not reused under another without the check (see note_session_user()).
- * A read-only session's UPDATE or DELETE is refused anyway, with the
- * read-only error, which PostgREST answers with 405 rather than 400, so it
- * is left to that.
+ * A read-only session gets the read-only error instead; see
+ * check_where_required().
  */
 static void
 check_where_for_session(Query *query)
@@ -1670,8 +1727,8 @@ check_where_for_session(Query *query)
 
     note_session_user();
 
-    if (session_requires_where() && !current_role_is_restricted())
-        check_where_required(query);
+    if (session_requires_where())
+        check_where_required(query, current_role_is_restricted());
 }
 
 /*
@@ -3073,6 +3130,15 @@ _PG_init(void)
                                   (Datum) 0);
     CacheRegisterSyscacheCallback(DATABASEOID, invalidate_database_owner,
                                   (Datum) 0);
+
+    /* A change of session user discards cached plans; see above. */
+    {
+        struct config_string *conf =
+            core_string_setting("session_authorization");
+
+        prev_sessauth_assign = conf->assign_hook;
+        conf->assign_hook = safesession_assign_sessauth;
+    }
 
     refuse_unknown_settings();
 

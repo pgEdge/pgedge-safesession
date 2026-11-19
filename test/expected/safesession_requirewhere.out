@@ -44,6 +44,12 @@ DROP ROLE IF EXISTS safesession_rw_made;
 NOTICE:  role "safesession_rw_made" does not exist, skipping
 DROP ROLE IF EXISTS safesession_rw_admin;
 NOTICE:  role "safesession_rw_admin" does not exist, skipping
+DROP ROLE IF EXISTS safesession_rw_pool;
+NOTICE:  role "safesession_rw_pool" does not exist, skipping
+DROP ROLE IF EXISTS safesession_rw_ro;
+NOTICE:  role "safesession_rw_ro" does not exist, skipping
+DROP ROLE IF EXISTS safesession_rw_wr;
+NOTICE:  role "safesession_rw_wr" does not exist, skipping
 CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 CREATE ROLE safesession_rw_login LOGIN;
 CREATE ROLE safesession_rw_group NOLOGIN;
@@ -330,6 +336,95 @@ DEALLOCATE rw_owner_del;
 RESET plan_cache_mode;
 RESET SESSION AUTHORIZATION;
 DROP FUNCTION rw_set_owner(text);
+-------------------------------------------------------------------------
+-- Test 11: in a delegating session, an unfiltered UPDATE or DELETE made
+-- while the acting role is read-only is refused at once, with the
+-- read-only error, so no unchecked plan is left to run after a switch to
+-- a role that can write. A filtered one still works there.
+-------------------------------------------------------------------------
+CREATE ROLE safesession_rw_pool LOGIN NOINHERIT;
+CREATE ROLE safesession_rw_ro NOLOGIN;
+CREATE ROLE safesession_rw_wr NOLOGIN;
+GRANT safesession_rw_ro, safesession_rw_wr TO safesession_rw_pool;
+GRANT ALL ON rw_items TO safesession_rw_ro, safesession_rw_wr;
+SET pgedge_safesession.require_where_roles = 'safesession_rw_pool';
+SET pgedge_safesession.delegating_roles = 'safesession_rw_pool';
+SET pgedge_safesession.acting_read_only_roles = 'safesession_rw_ro';
+SET plan_cache_mode = force_generic_plan;
+SET SESSION AUTHORIZATION safesession_rw_pool;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_ro', true);
+    set_config     
+-------------------
+ safesession_rw_ro
+(1 row)
+
+PREPARE rw_ro_all AS DELETE FROM rw_items;
+ERROR:  cannot execute DELETE in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_ro', true);
+    set_config     
+-------------------
+ safesession_rw_ro
+(1 row)
+
+PREPARE rw_ro_one AS DELETE FROM rw_items WHERE id = 1;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_wr', true);
+    set_config     
+-------------------
+ safesession_rw_wr
+(1 row)
+
+EXECUTE rw_ro_all;
+ERROR:  prepared statement "rw_ro_all" does not exist
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_rw_wr', true);
+    set_config     
+-------------------
+ safesession_rw_wr
+(1 row)
+
+EXECUTE rw_ro_one;
+ROLLBACK;
+DEALLOCATE rw_ro_one;
+RESET SESSION AUTHORIZATION;
+RESET plan_cache_mode;
+RESET pgedge_safesession.acting_read_only_roles;
+RESET pgedge_safesession.delegating_roles;
+-------------------------------------------------------------------------
+-- Test 12: a change of session user in the middle of a statement, from
+-- set_config(), discards cached plans before anything else runs, so a
+-- plan cached under a session user that is not covered is checked again.
+-------------------------------------------------------------------------
+CREATE FUNCTION rw_del_arg(x text) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM rw_items;
+    RETURN 'deleted';
+END $$;
+SET pgedge_safesession.require_where_roles = 'safesession_rw_login';
+SET plan_cache_mode = force_generic_plan;
+BEGIN;
+SELECT rw_del_arg('as a superuser');
+ rw_del_arg 
+------------
+ deleted
+(1 row)
+
+ROLLBACK;
+\set SHOW_CONTEXT never
+BEGIN;
+SELECT rw_del_arg(set_config('session_authorization',
+                             'safesession_rw_login', true));
+ERROR:  DELETE requires a WHERE clause
+ROLLBACK;
+\set SHOW_CONTEXT errors
+RESET plan_cache_mode;
+DROP FUNCTION rw_del_arg(text);
 -- Cleanup
 RESET pgedge_safesession.require_where_roles;
 SELECT * FROM rw_items ORDER BY id;
@@ -353,4 +448,7 @@ DROP ROLE safesession_rw_other;
 DROP ROLE safesession_rw_owner;
 DROP ROLE safesession_rw_made;
 DROP ROLE safesession_rw_admin;
+DROP ROLE safesession_rw_pool;
+DROP ROLE safesession_rw_ro;
+DROP ROLE safesession_rw_wr;
 DROP EXTENSION pgedge_safesession;
