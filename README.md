@@ -20,7 +20,9 @@ for restricted roles.
   acts as
 - Role membership inheritance: members of restricted roles
   are also restricted
-- Superuser exemption: superusers are never blocked
+- Superuser exemption: superusers are never blocked, except
+  a superuser login on `delegating_roles`, which is judged by
+  the role each request acts as
 - Supports PostgreSQL 14+
 
 ## Quick Start

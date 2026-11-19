@@ -19,7 +19,9 @@ dangerous commands.
 - Role membership inheritance: members of restricted roles
   are also restricted
 - Superuser exemption: superusers are never restricted, even
-  if they are members of restricted roles
+  if they are members of restricted roles; a superuser login
+  on `delegating_roles` is the exception, judged by the role
+  each request acts as
 - Session-user anchored: SET ROLE cannot escape restrictions
   (a delegating session is judged by the role it acts as)
 - Delegating sessions: a pooled login role, such as
