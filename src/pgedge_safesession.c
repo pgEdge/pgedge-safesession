@@ -23,6 +23,7 @@
 #include "access/xact.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_aggregate.h"
+#include "catalog/pg_authid.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
@@ -69,6 +70,7 @@ static char *safesession_roles = NULL;
 static char *safesession_read_only_roles = NULL;
 static char *safesession_delegating_roles = NULL;
 static char *safesession_acting_read_only_roles = NULL;
+static char *safesession_require_where_roles = NULL;
 static bool safesession_block_dml = true;
 static bool safesession_block_ddl = true;
 static bool safesession_block_c_functions = true;
@@ -1037,6 +1039,7 @@ plan_allows_set_config(PlannedStmt *pstmt)
 static List *cached_role_oids = NIL;
 static List *delegating_role_oids = NIL;
 static List *acting_read_only_oids = NIL;
+static List *require_where_oids = NIL;
 static bool  role_cache_valid = false;
 
 /*
@@ -1136,6 +1139,35 @@ invalidate_role_cache(Datum arg, int cacheid, uint32 hashvalue)
     ResetPlanCache();
 }
 
+/*
+ * The syscache hash of this database's pg_database row, worked out in
+ * session_requires_where(): it can need the catalog, which a cache callback
+ * may not read. 0 until then.
+ */
+static uint32 my_database_hash = 0;
+static bool  where_owner_matters = true;
+
+/*
+ * A change of this database's owner changes who is a member of
+ * pg_database_owner, and so who must qualify its UPDATEs and DELETEs:
+ * discard the cached plans, which were checked for the old answer. A
+ * change to another database's row is ignored once this one's hash is
+ * known.
+ */
+static void
+invalidate_database_owner(Datum arg, int cacheid, uint32 hashvalue)
+{
+    if (!list_is_set(safesession_require_where_roles))
+        return;
+
+    if (role_cache_valid && !where_owner_matters)
+        return;
+
+    if (hashvalue == 0 || my_database_hash == 0 ||
+        hashvalue == my_database_hash)
+        ResetPlanCache();
+}
+
 /* The assign hook for every list of roles. */
 static void
 assign_safesession_roles(const char *newval, void *extra)
@@ -1214,6 +1246,7 @@ rebuild_role_cache(void)
     List *read_only = NIL;
     List *delegating = NIL;
     List *acting = NIL;
+    List *require_where = NIL;
 
     /* We are about to read the catalog; a transaction must be active. */
     Assert(IsTransactionState());
@@ -1236,13 +1269,20 @@ rebuild_role_cache(void)
                       safesession_delegating_roles, &delegating, false);
     resolve_role_list("pgedge_safesession.acting_read_only_roles",
                       safesession_acting_read_only_roles, &acting, false);
+    resolve_role_list("pgedge_safesession.require_where_roles",
+                      safesession_require_where_roles, &require_where,
+                      false);
 
     list_free(cached_role_oids);
     list_free(delegating_role_oids);
     list_free(acting_read_only_oids);
+    list_free(require_where_oids);
     cached_role_oids = read_only;
     delegating_role_oids = delegating;
     acting_read_only_oids = acting;
+    require_where_oids = require_where;
+    where_owner_matters = role_in_list(require_where_oids,
+                                       ROLE_PG_DATABASE_OWNER);
 }
 
 /*
@@ -1258,14 +1298,16 @@ report_role_lists(void)
     List *unused = NIL;
 
     lists_changed = false;
-    lists = psprintf("%s\n%s\n%s\n%s",
+    lists = psprintf("%s\n%s\n%s\n%s\n%s",
                      safesession_roles ? safesession_roles : "",
                      safesession_read_only_roles ?
                      safesession_read_only_roles : "",
                      safesession_delegating_roles ?
                      safesession_delegating_roles : "",
                      safesession_acting_read_only_roles ?
-                     safesession_acting_read_only_roles : "");
+                     safesession_acting_read_only_roles : "",
+                     safesession_require_where_roles ?
+                     safesession_require_where_roles : "");
     if (reported_lists != NULL && strcmp(lists, reported_lists) == 0)
     {
         pfree(lists);
@@ -1280,6 +1322,8 @@ report_role_lists(void)
                       safesession_delegating_roles, &unused, true);
     resolve_role_list("pgedge_safesession.acting_read_only_roles",
                       safesession_acting_read_only_roles, &unused, true);
+    resolve_role_list("pgedge_safesession.require_where_roles",
+                      safesession_require_where_roles, &unused, true);
     list_free(unused);
 
     /* The acting list only applies to delegating sessions */
@@ -1335,6 +1379,146 @@ static bool
 session_is_delegating(void)
 {
     return OidIsValid(delegating_login());
+}
+
+/*
+ * Is roleid on require_where_roles, or a member that can act as a role on
+ * it? On PostgreSQL 16 and later that means one that can SET ROLE to it:
+ * an ADMIN-only grant, such as the one a CREATEROLE role is given over
+ * each role it creates, does not count. A superuser counts only when it is
+ * listed itself: PostgreSQL makes it able to act as every role, which says
+ * nothing about which logins the list means.
+ */
+static bool
+role_requires_where(Oid roleid)
+{
+    ListCell *lc;
+    bool      superuser = superuser_arg(roleid);
+
+    foreach(lc, require_where_oids)
+    {
+        Oid listed = lfirst_oid(lc);
+
+        if (roleid == listed)
+            return true;
+        if (superuser)
+            continue;
+#if PG_VERSION_NUM >= 160000
+        if (member_can_set_role(roleid, listed))
+            return true;
+#else
+        if (is_member_of_role_nosuper(roleid, listed))
+            return true;
+#endif
+    }
+    return false;
+}
+
+/*
+ * Must this session give every UPDATE and DELETE a WHERE clause? True when
+ * the role it logged in as is, or is a member of, a role in
+ * require_where_roles. The session user counts, and so does the role the
+ * connection authenticated as, so a superuser pool that switches with SET
+ * SESSION AUTHORIZATION stays covered; SET ROLE and SECURITY DEFINER
+ * functions change neither. Needs a transaction: it reads the catalog.
+ */
+static bool
+session_requires_where(void)
+{
+    Oid session_userid;
+    Oid authenticated;
+
+    if (!list_is_set(safesession_require_where_roles))
+        return false;
+
+    session_userid = GetSessionUserId();
+
+    /* As in current_role_is_restricted(), for a session the list fits */
+    if (lists_changed && !IsParallelWorker() &&
+        !superuser_arg(session_userid))
+        report_role_lists();
+
+    if (!role_cache_valid)
+        rebuild_role_cache();
+
+    if (my_database_hash == 0)
+        my_database_hash =
+            GetSysCacheHashValue1(DATABASEOID,
+                                  ObjectIdGetDatum(MyDatabaseId));
+
+    if (role_requires_where(session_userid))
+        return true;
+
+    authenticated = GetAuthenticatedUserId();
+    return authenticated != session_userid &&
+        role_requires_where(authenticated);
+}
+
+/*
+ * The session user the last time note_session_user() looked.
+ *
+ * The WHERE check runs when a statement is parsed and planned, so a plan
+ * cached while the rule did not apply would skip it. A change of the
+ * setting, of a role's memberships or of the database's owner discards
+ * cached plans by itself (see the assign hook and the cache callbacks).
+ * What is left is a change of the session user, with SET SESSION
+ * AUTHORIZATION or set_config('session_authorization', ...): when the new
+ * session user must qualify its UPDATEs and DELETEs, discard the cached
+ * plans, as note_restriction_state() does for read-only.
+ */
+static Oid where_session_user = InvalidOid;
+
+static void
+note_session_user(void)
+{
+    Oid user;
+
+    if (!list_is_set(safesession_require_where_roles))
+        return;
+
+    user = GetSessionUserId();
+    if (user == where_session_user)
+        return;
+    where_session_user = user;
+
+    if (session_requires_where())
+        ResetPlanCache();
+}
+
+/*
+ * Refuse an UPDATE or DELETE with no WHERE clause, the check pg-safeupdate
+ * makes, including inside data-modifying WITH queries. The SQLSTATE and
+ * the messages match safeupdate's, so PostgREST and its clients see no
+ * difference. Any WHERE clause counts, even WHERE true: this guards
+ * against mistakes, and row-level security still decides which rows a
+ * request can change.
+ *
+ * It runs from the post_parse_analyze hook, before rewrite, so a view's
+ * own WHERE does not count, and again from the planner hook, because a
+ * BEGIN ATOMIC function body is stored already analysed and is planned
+ * but never parsed again. MERGE and TRUNCATE are not covered.
+ */
+static void
+check_where_required(Query *query)
+{
+    ListCell *lc;
+
+    foreach(lc, query->cteList)
+    {
+        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+
+        if (IsA(cte->ctequery, Query))
+            check_where_required((Query *) cte->ctequery);
+    }
+
+    if ((query->commandType == CMD_UPDATE ||
+         query->commandType == CMD_DELETE) &&
+        query->jointree != NULL && query->jointree->quals == NULL)
+        ereport(ERROR,
+                (errcode(ERRCODE_CARDINALITY_VIOLATION),
+                 errmsg("%s requires a WHERE clause",
+                        query->commandType == CMD_UPDATE ?
+                        "UPDATE" : "DELETE")));
 }
 
 /*
@@ -1465,6 +1649,29 @@ current_role_is_restricted(void)
     }
 
     return false;
+}
+
+/*
+ * The WHERE check, as the parse and planner hooks run it, for a session
+ * that must qualify its UPDATEs and DELETEs.
+ *
+ * The session user is noted first, so a plan made under one session user
+ * is not reused under another without the check (see note_session_user()).
+ * A read-only session's UPDATE or DELETE is refused anyway, with the
+ * read-only error, which PostgREST answers with 405 rather than 400, so it
+ * is left to that.
+ */
+static void
+check_where_for_session(Query *query)
+{
+    if (!list_is_set(safesession_require_where_roles) ||
+        !IsTransactionState())
+        return;
+
+    note_session_user();
+
+    if (session_requires_where() && !current_role_is_restricted())
+        check_where_required(query);
 }
 
 /*
@@ -1644,7 +1851,9 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 /*
  * ExecutorEnd hook: on a server with a delegating role, look again at the
- * restriction once a statement ends.
+ * restriction once a statement ends; and, on a server with
+ * require_where_roles, at whether the session user changed (see
+ * note_session_user()).
  *
  * A statement can change the role the session acts as, as the switch a
  * pool runs at the start of each request does with set_config('role',
@@ -1665,6 +1874,10 @@ safesession_ExecutorEnd(QueryDesc *queryDesc)
 
     if (delegating_configured() && IsTransactionState())
         note_restriction_state(current_role_is_restricted());
+
+    /* set_config('session_authorization', ...) can change who must qualify */
+    if (IsTransactionState())
+        note_session_user();
 }
 
 /*
@@ -1693,6 +1906,12 @@ safesession_post_parse_analyze(ParseState *pstate, Query *query
                                 , jstate
 #endif
                                 );
+
+    /*
+     * Before rewrite, as safeupdate checks, so a view's own WHERE does not
+     * count as the statement's; see check_where_required().
+     */
+    check_where_for_session(query);
 
     if (safesession_block_c_functions &&
         IsTransactionState() &&
@@ -1740,6 +1959,9 @@ safesession_planner(Query *parse, const char *query_string,
 #endif
                     )
 {
+    /* For a BEGIN ATOMIC body, which is planned but never parsed again */
+    check_where_for_session(parse);
+
     if (safesession_block_c_functions &&
         IsTransactionState() &&
         current_role_is_restricted() &&
@@ -2490,9 +2712,14 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
      * them. The check at the top of this function ran before any of that
      * took effect, so look again now that it has, rather than leaving the
      * change to be noticed by whatever statement happens to come next.
+     * SET SESSION AUTHORIZATION can also change who must qualify its
+     * UPDATEs and DELETEs.
      */
     if (IsTransactionState())
+    {
         note_restriction_state(current_role_is_restricted());
+        note_session_user();
+    }
 }
 
 /*
@@ -2585,6 +2812,12 @@ check_acting_read_only_roles(char **newval, void **extra, GucSource source)
 {
     return check_role_list("pgedge_safesession.acting_read_only_roles",
                            newval);
+}
+
+static bool
+check_require_where_roles(char **newval, void **extra, GucSource source)
+{
+    return check_role_list("pgedge_safesession.require_where_roles", newval);
 }
 
 /*
@@ -2711,6 +2944,22 @@ _PG_init(void)
         assign_safesession_roles,
         NULL);
 
+    DefineCustomStringVariable(
+        "pgedge_safesession.require_where_roles",
+        "Login roles whose UPDATE and DELETE need a WHERE clause.",
+        "A comma-separated list of role names. A session whose login "
+        "role is one of these roles, or a member of one that can act "
+        "as it, has an UPDATE or DELETE with no WHERE clause refused, "
+        "as pg-safeupdate does, also inside WITH queries and "
+        "functions.",
+        &safesession_require_where_roles,
+        "",
+        PGC_SUSET,
+        GUC_LIST_INPUT,
+        check_require_where_roles,
+        assign_safesession_roles,
+        NULL);
+
     DefineCustomBoolVariable(
         "pgedge_safesession.block_dml",
         "Block INSERT, UPDATE, DELETE, and MERGE for "
@@ -2821,6 +3070,8 @@ _PG_init(void)
     CacheRegisterSyscacheCallback(AUTHOID, invalidate_role_cache,
                                   (Datum) 0);
     CacheRegisterSyscacheCallback(AUTHMEMROLEMEM, invalidate_role_cache,
+                                  (Datum) 0);
+    CacheRegisterSyscacheCallback(DATABASEOID, invalidate_database_owner,
                                   (Datum) 0);
 
     refuse_unknown_settings();

@@ -44,8 +44,9 @@ SELECT name, setting FROM pg_settings
  pgedge_safesession.block_dml              | on
  pgedge_safesession.delegating_roles       | 
  pgedge_safesession.read_only_roles        | 
+ pgedge_safesession.require_where_roles    | 
  pgedge_safesession.roles                  | 
-(8 rows)
+(9 rows)
 
 CREATE ROLE safesession_guc_test LOGIN;
 CREATE TABLE test_gucs (id int, val text);
