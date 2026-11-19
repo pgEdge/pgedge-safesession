@@ -14,10 +14,14 @@ for restricted roles.
   GRANT/REVOKE, VACUUM/ANALYZE, and volatile C-language
   function execution
 - Configurable protection layers via SUSET GUCs
-- Session-user anchored: SET ROLE and SECURITY DEFINER
-  functions cannot escape restrictions; a pooled login role,
-  such as PostgREST's, is judged by the role each request
-  acts as
+- Session-user anchored: in an ordinary session, SET ROLE and
+  SECURITY DEFINER functions cannot escape restrictions
+- Delegating sessions: a pooled login role listed in
+  `delegating_roles`, such as PostgREST's, is judged by the
+  role each request acts as. This release does not stop a
+  request from switching role again in the same transaction,
+  so do not turn on `delegating_roles` until a release that
+  locks the role
 - Role membership inheritance: members of restricted roles
   are also restricted
 - Superuser exemption: superusers are never blocked, except
