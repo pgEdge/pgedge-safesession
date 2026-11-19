@@ -50,6 +50,10 @@ DROP ROLE IF EXISTS safesession_rw_ro;
 NOTICE:  role "safesession_rw_ro" does not exist, skipping
 DROP ROLE IF EXISTS safesession_rw_wr;
 NOTICE:  role "safesession_rw_wr" does not exist, skipping
+DROP ROLE IF EXISTS safesession_rw_guard;
+NOTICE:  role "safesession_rw_guard" does not exist, skipping
+DROP ROLE IF EXISTS safesession_rw_caller;
+NOTICE:  role "safesession_rw_caller" does not exist, skipping
 CREATE EXTENSION IF NOT EXISTS pgedge_safesession;
 CREATE ROLE safesession_rw_login LOGIN;
 CREATE ROLE safesession_rw_group NOLOGIN;
@@ -425,6 +429,59 @@ ROLLBACK;
 \set SHOW_CONTEXT errors
 RESET plan_cache_mode;
 DROP FUNCTION rw_del_arg(text);
+-------------------------------------------------------------------------
+-- Test 13: a plan made before the rule applied is refused when it runs
+-- after the rule starts to apply in the same transaction. On PostgreSQL
+-- 14 to 17 a SQL function plans all its statements when it starts, so here
+-- the DELETE is planned before the GRANT that makes the caller covered.
+-- WHERE true still counts as a WHERE clause.
+-------------------------------------------------------------------------
+CREATE ROLE safesession_rw_guard NOLOGIN;
+CREATE ROLE safesession_rw_caller LOGIN;
+GRANT ALL ON rw_items TO safesession_rw_caller;
+CREATE FUNCTION rw_grant_delete() RETURNS void LANGUAGE sql
+    SECURITY DEFINER AS $$
+    GRANT safesession_rw_guard TO safesession_rw_caller;
+    DELETE FROM rw_items;
+$$;
+CREATE FUNCTION rw_grant_delete_true() RETURNS void LANGUAGE sql
+    SECURITY DEFINER AS $$
+    GRANT safesession_rw_guard TO safesession_rw_caller;
+    DELETE FROM rw_items WHERE true;
+$$;
+GRANT EXECUTE ON FUNCTION rw_grant_delete(), rw_grant_delete_true()
+    TO safesession_rw_caller;
+SET pgedge_safesession.require_where_roles = 'safesession_rw_guard';
+SET SESSION AUTHORIZATION safesession_rw_caller;
+\set SHOW_CONTEXT never
+BEGIN;
+SELECT rw_grant_delete();
+ERROR:  DELETE requires a WHERE clause
+ROLLBACK;
+\set SHOW_CONTEXT errors
+BEGIN;
+SELECT rw_grant_delete_true();
+ rw_grant_delete_true 
+----------------------
+ 
+(1 row)
+
+SELECT count(*) AS rows_left_where_true FROM rw_items;
+ rows_left_where_true 
+----------------------
+                    0
+(1 row)
+
+ROLLBACK;
+RESET SESSION AUTHORIZATION;
+SELECT count(*) AS rows_left FROM rw_items;
+ rows_left 
+-----------
+         2
+(1 row)
+
+DROP FUNCTION rw_grant_delete();
+DROP FUNCTION rw_grant_delete_true();
 -- Cleanup
 RESET pgedge_safesession.require_where_roles;
 SELECT * FROM rw_items ORDER BY id;
@@ -451,4 +508,6 @@ DROP ROLE safesession_rw_admin;
 DROP ROLE safesession_rw_pool;
 DROP ROLE safesession_rw_ro;
 DROP ROLE safesession_rw_wr;
+DROP ROLE safesession_rw_guard;
+DROP ROLE safesession_rw_caller;
 DROP EXTENSION pgedge_safesession;

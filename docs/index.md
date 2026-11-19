@@ -213,7 +213,10 @@ whole table.
 - A cached plan is checked again when the setting, a role's
   memberships, the database's owner or the session user
   changes, even a change of session user made in the middle
-  of a statement with `set_config()`.
+  of a statement with `set_config()`. A plan made earlier in
+  the same transaction, such as by a SQL function that plans
+  all its statements before it runs them, is refused when it
+  runs once the rule applies.
 - Any `WHERE` clause counts, even `WHERE true`. This
   guards against mistakes; row-level security still
   decides which rows a request can change.

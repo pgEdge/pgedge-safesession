@@ -1548,26 +1548,32 @@ core_string_setting(const char *name)
  * otherwise its plan could be cached unchecked and run later, once the
  * session can write.
  */
-static void
-check_where_required(Query *query, bool restricted)
+/* The first UPDATE or DELETE with no WHERE clause in the query, or NULL. */
+static const char *
+unfiltered_command(Query *query)
 {
     ListCell *lc;
-    const char *cmd;
 
     foreach(lc, query->cteList)
     {
         CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+        const char      *cmd;
 
-        if (IsA(cte->ctequery, Query))
-            check_where_required((Query *) cte->ctequery, restricted);
+        if (IsA(cte->ctequery, Query) &&
+            (cmd = unfiltered_command((Query *) cte->ctequery)) != NULL)
+            return cmd;
     }
 
     if ((query->commandType != CMD_UPDATE &&
          query->commandType != CMD_DELETE) ||
         query->jointree == NULL || query->jointree->quals != NULL)
-        return;
+        return NULL;
+    return query->commandType == CMD_UPDATE ? "UPDATE" : "DELETE";
+}
 
-    cmd = query->commandType == CMD_UPDATE ? "UPDATE" : "DELETE";
+static void
+refuse_unfiltered(const char *cmd, bool restricted)
+{
     if (restricted)
         ereport(ERROR,
                 (errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
@@ -1577,6 +1583,82 @@ check_where_required(Query *query, bool restricted)
     ereport(ERROR,
             (errcode(ERRCODE_CARDINALITY_VIOLATION),
              errmsg("%s requires a WHERE clause", cmd)));
+}
+
+static void
+check_where_required(Query *query, bool restricted)
+{
+    const char *cmd = unfiltered_command(query);
+
+    if (cmd != NULL)
+        refuse_unfiltered(cmd, restricted);
+}
+
+/*
+ * A plan made while the rule did not apply to the session, for an UPDATE
+ * or DELETE with no WHERE clause, is remembered until the transaction ends.
+ * If the rule applies by the time the plan is run, it is refused then. A
+ * plan Postgres caches for later is planned again when the rule may have
+ * changed (see note_session_user() and invalidate_role_cache()), but on
+ * PostgreSQL 14 to 17 a SQL function plans all its statements when it
+ * starts and keeps them to itself, so a GRANT earlier in the same function
+ * that makes the rule apply would otherwise let a later unfiltered DELETE
+ * run. The plan is told apart by its address and two of its parts, so a
+ * new plan that happens to reuse the address is not mistaken for it.
+ */
+typedef struct UncheckedPlan
+{
+    PlannedStmt *stmt;
+    Plan        *tree;
+    List        *rtable;
+    const char  *cmd;
+} UncheckedPlan;
+
+static List *unchecked_plans = NIL;     /* in TopTransactionContext */
+
+static bool current_role_is_restricted(void);
+
+static void
+note_unchecked_plan(PlannedStmt *stmt, const char *cmd)
+{
+    MemoryContext  old = MemoryContextSwitchTo(TopTransactionContext);
+    UncheckedPlan *plan = palloc(sizeof(UncheckedPlan));
+
+    plan->stmt = stmt;
+    plan->tree = stmt->planTree;
+    plan->rtable = stmt->rtable;
+    plan->cmd = cmd;
+    unchecked_plans = lappend(unchecked_plans, plan);
+    MemoryContextSwitchTo(old);
+}
+
+static void
+check_unchecked_plan(PlannedStmt *stmt)
+{
+    ListCell *lc;
+
+    if (unchecked_plans == NIL || !IsTransactionState())
+        return;
+    foreach(lc, unchecked_plans)
+    {
+        UncheckedPlan *plan = lfirst(lc);
+
+        if (plan->stmt == stmt && plan->tree == stmt->planTree &&
+            plan->rtable == stmt->rtable &&
+            session_requires_where())
+            refuse_unfiltered(plan->cmd, current_role_is_restricted());
+    }
+}
+
+/* The list lives in the transaction's memory; forget it when that goes. */
+static void
+safesession_xact_callback(XactEvent event, void *arg)
+{
+    if (event == XACT_EVENT_COMMIT || event == XACT_EVENT_ABORT ||
+        event == XACT_EVENT_PREPARE ||
+        event == XACT_EVENT_PARALLEL_COMMIT ||
+        event == XACT_EVENT_PARALLEL_ABORT)
+        unchecked_plans = NIL;
 }
 
 /*
@@ -1803,6 +1885,9 @@ safesession_ExecutorStart(QueryDesc *queryDesc, int eflags)
     QueryDesc *save_starting;
     int        save_verdict;
 
+    /* A plan made before the WHERE rule applied; see note_unchecked_plan() */
+    check_unchecked_plan(queryDesc->plannedstmt);
+
     /*
      * Only consult the catalog (the role lookups in
      * current_role_is_restricted()) or touch the read-only GUC
@@ -2016,6 +2101,14 @@ safesession_planner(Query *parse, const char *query_string,
 #endif
                     )
 {
+    PlannedStmt *result;
+    const char  *unchecked = NULL;
+
+    /* An unfiltered UPDATE or DELETE planned while the rule does not apply */
+    if (list_is_set(safesession_require_where_roles) &&
+        IsTransactionState() && !session_requires_where())
+        unchecked = unfiltered_command(parse);
+
     /* For a BEGIN ATOMIC body, which is planned but never parsed again */
     check_where_for_session(parse);
 
@@ -2028,19 +2121,23 @@ safesession_planner(Query *parse, const char *query_string,
                            " side effects in a read-only session");
 
     if (prev_planner_hook)
-        return prev_planner_hook(parse, query_string, cursorOptions,
-                                 boundParams
+        result = prev_planner_hook(parse, query_string, cursorOptions,
+                                   boundParams
 #if PG_VERSION_NUM >= 190000
-                                 , es
+                                   , es
 #endif
-                                 );
+                                   );
     else
-        return standard_planner(parse, query_string, cursorOptions,
-                                boundParams
+        result = standard_planner(parse, query_string, cursorOptions,
+                                  boundParams
 #if PG_VERSION_NUM >= 190000
-                                , es
+                                  , es
 #endif
-                                );
+                                  );
+
+    if (unchecked != NULL)
+        note_unchecked_plan(result, unchecked);
+    return result;
 }
 
 /*
@@ -3139,6 +3236,8 @@ _PG_init(void)
         prev_sessauth_assign = conf->assign_hook;
         conf->assign_hook = safesession_assign_sessauth;
     }
+
+    RegisterXactCallback(safesession_xact_callback, NULL);
 
     refuse_unknown_settings();
 
