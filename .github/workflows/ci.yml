@@ -36,7 +36,8 @@ jobs:
           sudo apt-get update
           sudo apt-get -y install \
               postgresql-${{ matrix.pg_version }} \
-              postgresql-server-dev-${{ matrix.pg_version }}
+              postgresql-server-dev-${{ matrix.pg_version }} \
+              libipc-run-perl
 
       - name: Build extension
         run: |

@@ -19,8 +19,9 @@ REGRESS = safesession_basic safesession_bypass safesession_functions \
           safesession_coverage \
           safesession_views safesession_rls safesession_domains \
           safesession_domainexec safesession_sequences \
-          safesession_xproto
+          safesession_xproto safesession_delegating
 REGRESS_OPTS = --inputdir=test
+TAP_TESTS = 1
 
 PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

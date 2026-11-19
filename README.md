@@ -14,11 +14,19 @@ for restricted roles.
   GRANT/REVOKE, VACUUM/ANALYZE, and volatile C-language
   function execution
 - Configurable protection layers via SUSET GUCs
-- Session-user anchored: SET ROLE and SECURITY DEFINER
-  functions cannot escape restrictions
+- Session-user anchored: in an ordinary session, SET ROLE and
+  SECURITY DEFINER functions cannot escape restrictions
+- Delegating sessions: a pooled login role listed in
+  `delegating_roles`, such as PostgREST's, is judged by the
+  role each request acts as. This release does not stop a
+  request from switching role again in the same transaction,
+  so do not turn on `delegating_roles` until a release that
+  locks the role
 - Role membership inheritance: members of restricted roles
   are also restricted
-- Superuser exemption: superusers are never blocked
+- Superuser exemption: superusers are never blocked, except
+  a superuser login on `delegating_roles`, which is judged by
+  the role each request acts as
 - Supports PostgreSQL 14+
 
 ## Quick Start
@@ -50,7 +58,7 @@ Configure restricted roles:
 -- Optional: register in pg_extension catalog
 CREATE EXTENSION pgedge_safesession;
 
-ALTER SYSTEM SET pgedge_safesession.roles =
+ALTER SYSTEM SET pgedge_safesession.read_only_roles =
     'readonly_user, reporting_role';
 SELECT pg_reload_conf();
 ```
