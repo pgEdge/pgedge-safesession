@@ -2222,16 +2222,39 @@ unheld_locked_setting(struct config_generic *gen, List *prefixes)
         name_under_prefixes(gen->name, prefixes);
 }
 
-/* Did SafeSession define this setting to hold it? */
+/*
+ * Does SafeSession hold this setting? A held setting has SafeSession's
+ * check while its name is under a locked prefix, so this costs the same
+ * however many settings are held.
+ */
+static bool
+gen_held_by_us(struct config_generic *gen)
+{
+    if (gen == NULL || gen->vartype != PGC_STRING)
+        return false;
+#if PG_VERSION_NUM >= 190000
+    return gen->_string.check_hook == check_request_setting;
+#else
+    return ((struct config_string *) gen)->check_hook ==
+        check_request_setting;
+#endif
+}
+
+/* The same, by name. */
 static bool
 held_by_us(const char *name)
 {
+#if PG_VERSION_NUM >= 160000
+    return gen_held_by_us(find_option(name, false, true, ERROR));
+#else
     ListCell *lc;
 
+    /* find_option() is not exported before PostgreSQL 16 */
     foreach(lc, held_setting_names)
         if (pg_strcasecmp(lfirst(lc), name) == 0)
             return true;
     return false;
+#endif
 }
 
 /*
@@ -2403,7 +2426,7 @@ hold_locked_settings(void)
 static bool
 unheld_locked_setting_changed(struct config_generic *gen, List *prefixes)
 {
-    if (!name_under_prefixes(gen->name, prefixes) || held_by_us(gen->name))
+    if (!name_under_prefixes(gen->name, prefixes) || gen_held_by_us(gen))
         return false;
     return (gen->flags & GUC_CUSTOM_PLACEHOLDER) || gen->stack != NULL;
 }
