@@ -667,7 +667,8 @@ ERROR:  cannot execute functions that may have side effects in a read-only sessi
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension. To set a response.* setting, call set_config() in a statement that reads no table, such as PERFORM set_config(...) in PL/pgSQL.
 CONTEXT:  PL/pgSQL function ss_assign_status() line 5 at assignment
 ROLLBACK;
--- A request that can write is not affected
+-- A request that can write is refused too, by the role lock: the value
+-- would still be there for the next request
 BEGIN;
 SELECT set_config('role', 'safesession_writer', true);
      set_config     
@@ -676,11 +677,9 @@ SELECT set_config('role', 'safesession_writer', true);
 (1 row)
 
 SELECT ss_uses_var();
-  ss_uses_var  
----------------
- from-variable
-(1 row)
-
+ERROR:  cannot change setting "app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
 ROLLBACK;
 RESET SESSION AUTHORIZATION;
 RESET pgedge_safesession.acting_read_only_roles;
@@ -870,7 +869,10 @@ CONTEXT:  SQL statement "SELECT txid_current()"
 PL/pgSQL function ss_takes_xid() line 3 at PERFORM
 ROLLBACK;
 -- The same for a plan that sets a value for the whole session, cached by
--- a PL/pgSQL function or prepared by a writer
+-- a PL/pgSQL function or prepared by a writer. A request cannot set a
+-- value for the whole session, or PREPARE, after the switch, so the pool's
+-- own switch statement prepares, after it switches.
+\set SHOW_CONTEXT never
 BEGIN;
 SELECT set_config('role', 'safesession_writer', true);
      set_config     
@@ -879,19 +881,18 @@ SELECT set_config('role', 'safesession_writer', true);
 (1 row)
 
 SELECT ss_set_lang();
- ss_set_lang 
--------------
- 
-(1 row)
-
-PREPARE ss_lang AS SELECT set_config('app.lang', 'y', false);
-EXECUTE ss_lang;
- set_config 
-------------
- y
-(1 row)
-
+ERROR:  cannot change setting "app.lang" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
 ROLLBACK;
+BEGIN;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_writer', true);
+    EXECUTE 'PREPARE ss_lang AS SELECT set_config(''app.lang'', ''y'','
+        ' false)';
+END $$;
+ROLLBACK;
+\set SHOW_CONTEXT errors
 BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
     set_config    
@@ -904,6 +905,18 @@ ERROR:  cannot execute functions that may have side effects in a read-only sessi
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 CONTEXT:  SQL statement "SELECT set_config('app.lang', 'x', false)"
 PL/pgSQL function ss_set_lang() line 3 at PERFORM
+ROLLBACK;
+-- A read-only request keeps the read-only error for SET too
+BEGIN;
+SELECT set_config('role', 'safesession_anon', true);
+    set_config    
+------------------
+ safesession_anon
+(1 row)
+
+SET default_transaction_read_only = off;
+ERROR:  cannot modify read-only transaction settings in a read-only session
+HINT:  This session is restricted to read-only access by the pgedge_safesession extension.
 ROLLBACK;
 BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
@@ -993,16 +1006,14 @@ SELECT ss_ret_dom();
 ERROR:  cannot execute functions that may have side effects in a read-only session
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension. To set a response.* setting, call set_config() in a statement that reads no table, such as PERFORM set_config(...) in PL/pgSQL.
 COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_anon', true);
-    set_config    
-------------------
- safesession_anon
-(1 row)
-
-SET LOCAL plan_cache_mode = force_generic_plan;
-PREPARE ss_q(int) AS SELECT * FROM ss_parted WHERE k = ss_pick($1);
 \set SHOW_CONTEXT never
+BEGIN;
+SET LOCAL plan_cache_mode = force_generic_plan;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_anon', true);
+    EXECUTE 'PREPARE ss_q(int) AS'
+        ' SELECT * FROM ss_parted WHERE k = ss_pick($1)';
+END $$;
 EXECUTE ss_q(1);
 ERROR:  cannot execute functions that may have side effects in a read-only session
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension. To set a response.* setting, call set_config() in a statement that reads no table, such as PERFORM set_config(...) in PL/pgSQL.
@@ -1041,18 +1052,15 @@ SELECT set_config('response.status', '201', true), ss_ret_dom();
 ERROR:  cannot execute functions that may have side effects in a read-only session
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension. To set a response.* setting, call set_config() in a statement that reads no table, such as PERFORM set_config(...) in PL/pgSQL.
 COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_anon', true);
-    set_config    
-------------------
- safesession_anon
-(1 row)
-
-SET LOCAL plan_cache_mode = force_generic_plan;
-PREPARE ss_q2(int) AS
-    SELECT set_config('response.status', '201', true), k
-    FROM ss_parted WHERE k = ss_pick($1);
 \set SHOW_CONTEXT never
+BEGIN;
+SET LOCAL plan_cache_mode = force_generic_plan;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_anon', true);
+    EXECUTE 'PREPARE ss_q2(int) AS'
+        ' SELECT set_config(''response.status'', ''201'', true), k'
+        ' FROM ss_parted WHERE k = ss_pick($1)';
+END $$;
 EXECUTE ss_q2(1);
 ERROR:  cannot execute functions that may have side effects in a read-only session
 HINT:  This session is restricted to read-only access by the pgedge_safesession extension. To set a response.* setting, call set_config() in a statement that reads no table, such as PERFORM set_config(...) in PL/pgSQL.

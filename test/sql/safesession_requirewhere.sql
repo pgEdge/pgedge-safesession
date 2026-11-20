@@ -297,14 +297,22 @@ SET pgedge_safesession.delegating_roles = 'safesession_rw_pool';
 SET pgedge_safesession.acting_read_only_roles = 'safesession_rw_ro';
 SET plan_cache_mode = force_generic_plan;
 SET SESSION AUTHORIZATION safesession_rw_pool;
+-- A request cannot PREPARE after the switch, so the pool's own switch
+-- statement does, after it switches
+\set SHOW_CONTEXT never
 BEGIN;
-SELECT set_config('role', 'safesession_rw_ro', true);
-PREPARE rw_ro_all AS DELETE FROM rw_items;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_rw_ro', true);
+    EXECUTE 'PREPARE rw_ro_all AS DELETE FROM rw_items';
+END $$;
 ROLLBACK;
 BEGIN;
-SELECT set_config('role', 'safesession_rw_ro', true);
-PREPARE rw_ro_one AS DELETE FROM rw_items WHERE id = 1;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_rw_ro', true);
+    EXECUTE 'PREPARE rw_ro_one AS DELETE FROM rw_items WHERE id = 1';
+END $$;
 ROLLBACK;
+\set SHOW_CONTEXT errors
 BEGIN;
 SELECT set_config('role', 'safesession_rw_wr', true);
 EXECUTE rw_ro_all;

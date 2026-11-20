@@ -886,8 +886,8 @@ SELECT set_config('role', 'safesession_lk_user', true);
 (1 row)
 
 SELECT ss_lk_dyn('jwt.claim.dept');
-ERROR:  cannot set a new request setting after the role switch in this transaction
-DETAIL:  Setting "request.jwt.claim.dept" is under a locked prefix but was not set before the switch.
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  Setting "request.jwt.claim.dept" is under a locked prefix and is not held. SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
 HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
 ROLLBACK;
 BEGIN;
@@ -899,8 +899,8 @@ SELECT set_config('role', 'safesession_lk_user', true);
 
 SELECT ss_lk_try('SELECT ss_lk_dyn(''jwt.claim.team''),'
                  || ' 1 / (random() * 0)::int');
-ERROR:  cannot set a new request setting after the role switch in this transaction
-DETAIL:  Setting "request.jwt.claim.team" is under a locked prefix but was not set before the switch.
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  Setting "request.jwt.claim.team" is under a locked prefix and is not held. SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
 HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
 ROLLBACK;
 \set SHOW_CONTEXT errors
@@ -1276,8 +1276,8 @@ SELECT set_config('role', 'safesession_lk_user', true);
 
 CREATE INDEX ON ss_lk_s.ss_lk_own
     ((public.ss_lk_forge('request.' || 'forged', id)));
-ERROR:  cannot set a new request setting after the role switch in this transaction
-DETAIL:  Setting "request.forged" is under a locked prefix but was not set before the switch.
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  Setting "request.forged" is under a locked prefix and is not held. SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
 HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
 ROLLBACK;
 -- The function runs first with a harmless name, so PL/pgSQL keeps its
@@ -1298,8 +1298,8 @@ SELECT public.ss_lk_forge('response.' || 'status', 0) AS primed;
 
 CREATE INDEX ON ss_lk_s.ss_lk_own
     ((public.ss_lk_forge('request.' || 'primed', id)));
-ERROR:  cannot set a new request setting after the role switch in this transaction
-DETAIL:  Setting "request.primed" is under a locked prefix but was not set before the switch.
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  Setting "request.primed" is under a locked prefix and is not held. SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
 HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
 ROLLBACK;
 BEGIN;
@@ -1324,8 +1324,8 @@ SELECT set_config('role', 'safesession_lk_user', true);
 (1 row)
 
 INSERT INTO ss_lk_s.ss_lk_own VALUES (2);
-ERROR:  cannot set a new request setting after the role switch in this transaction
-DETAIL:  Setting "request.after" is under a locked prefix but was not set before the switch.
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  Setting "request.after" is under a locked prefix and is not held. SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
 HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
 ROLLBACK;
 \set SHOW_CONTEXT errors
@@ -1352,6 +1352,412 @@ NOTICE:  drop cascades to table ss_lk_s.ss_lk_own
 DROP FUNCTION ss_lk_forge(text, int);
 DROP FUNCTION ss_lk_after();
 DROP FUNCTION ss_lk_status();
+RESET pgedge_safesession.delegating_roles;
+-------------------------------------------------------------------------
+-- Test 20: after the switch, a request cannot change a setting for the
+-- whole session, with SET, RESET or set_config(..., false or null), also
+-- with a name built at run time or one that starts with transaction_
+-- (only SET TRANSACTION's own settings are let through), so nothing is
+-- left for the next request on the connection. SET LOCAL,
+-- set_config(..., true) and SET TRANSACTION still work, and after each
+-- refusal the next request works.
+-------------------------------------------------------------------------
+CREATE FUNCTION ss_lk_session_set(name text) RETURNS text
+    LANGUAGE plpgsql AS $$
+DECLARE v text;
+BEGIN
+    v := set_config(name, 'leaked', false);
+    RETURN v;
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_session_set(text) TO PUBLIC;
+CREATE FUNCTION ss_lk_set_any(name text, value text, local bool)
+    RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN set_config(name, value, local);
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_set_any(text, text, bool) TO PUBLIC;
+SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SET app.leak = 'leaked';
+ERROR:  cannot change setting "app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT set_config('app.leak', 'leaked', false);
+ERROR:  cannot change setting "app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT set_config('app.leak', 'leaked', NULL);
+ERROR:  cannot change setting "app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SET transaction_app.leak = 'leaked';
+ERROR:  cannot change setting "transaction_app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT ss_lk_session_set('app.' || 'leak');
+ERROR:  cannot change setting "app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+-- PL/pgSQL keeps the helper's set_config() from the pool's call before the
+-- switch; the request's call after it is still checked
+BEGIN;
+SELECT ss_lk_set_any('app.pool', 'pool', true);
+ ss_lk_set_any 
+---------------
+ pool
+(1 row)
+
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT ss_lk_set_any('app.leak', 'leaked', false);
+ERROR:  cannot change setting "app.leak" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+RESET search_path;
+ERROR:  cannot change setting "search_path" for the whole session after the role switch in this transaction
+DETAIL:  The change would still be there for the next request on the connection.
+HINT:  Use SET LOCAL, or set_config() with is_local true.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;
+ERROR:  cannot run SET SESSION CHARACTERISTICS after the role switch in this transaction
+DETAIL:  It would change how later transactions on the connection start.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT ss_lk_try('SET app.leak = ''leaked''');
+                                                ss_lk_try                                                
+---------------------------------------------------------------------------------------------------------
+ 42501: cannot change setting "app.leak" for the whole session after the role switch in this transaction
+(1 row)
+
+SET TRANSACTION READ ONLY;
+SET LOCAL app.leak = 'local';
+SELECT set_config('app.other', 'local', true) AS local_set;
+ local_set 
+-----------
+ local
+(1 row)
+
+COMMIT;
+RESET SESSION AUTHORIZATION;
+SELECT coalesce(current_setting('app.leak', true), '') AS app_leak,
+       coalesce(current_setting('app.other', true), '') AS app_other,
+       coalesce(current_setting('transaction_app.leak', true), '')
+           AS transaction_app_leak;
+ app_leak | app_other | transaction_app_leak 
+----------+-----------+----------------------
+          |           | 
+(1 row)
+
+-------------------------------------------------------------------------
+-- Test 21: after the switch, a request cannot PREPARE, which would leave
+-- a prepared statement for the next request, or DEALLOCATE, which would
+-- remove one the pool uses. The pool's own statement still runs.
+-------------------------------------------------------------------------
+SET SESSION AUTHORIZATION safesession_lk_auth;
+PREPARE ss_lk_pool AS SELECT current_user::text AS who;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+PREPARE ss_lk_mine AS SELECT 1;
+ERROR:  cannot run PREPARE after the role switch in this transaction
+DETAIL:  It would leave a prepared statement for the next request on the connection.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+DEALLOCATE ss_lk_pool;
+ERROR:  cannot run DEALLOCATE after the role switch in this transaction
+DETAIL:  It would remove a prepared statement the connection may need for the next request.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+DEALLOCATE ALL;
+ERROR:  cannot run DEALLOCATE after the role switch in this transaction
+DETAIL:  It would remove a prepared statement the connection may need for the next request.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT ss_lk_try('PREPARE ss_lk_mine AS SELECT 1');
+                              ss_lk_try                              
+---------------------------------------------------------------------
+ 42501: cannot run PREPARE after the role switch in this transaction
+(1 row)
+
+EXECUTE ss_lk_pool;
+         who         
+---------------------
+ safesession_lk_user
+(1 row)
+
+COMMIT;
+SELECT name FROM pg_prepared_statements ORDER BY name;
+    name    
+------------
+ ss_lk_pool
+(1 row)
+
+DEALLOCATE ss_lk_pool;
+RESET SESSION AUTHORIZATION;
+-------------------------------------------------------------------------
+-- Test 22: after the switch, a request cannot save settings for later
+-- sessions with ALTER ROLE or ALTER DATABASE ... SET or RESET, even for
+-- its own role or a database it owns.
+-------------------------------------------------------------------------
+SELECT current_database() AS ss_lk_dbname,
+       datdba::regrole::text AS ss_lk_dbowner
+    FROM pg_database WHERE datname = current_database() \gset
+ALTER DATABASE :"ss_lk_dbname" OWNER TO safesession_lk_user;
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+ALTER ROLE CURRENT_USER SET work_mem = '7777kB';
+ERROR:  cannot run ALTER ROLE ... SET or RESET after the role switch in this transaction
+DETAIL:  It would change the settings of later sessions.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+ALTER ROLE CURRENT_USER RESET ALL;
+ERROR:  cannot run ALTER ROLE ... SET or RESET after the role switch in this transaction
+DETAIL:  It would change the settings of later sessions.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+ALTER DATABASE :"ss_lk_dbname" SET work_mem = '7777kB';
+ERROR:  cannot run ALTER DATABASE ... SET or RESET after the role switch in this transaction
+DETAIL:  It would change the settings of later sessions.
+HINT:  pgedge_safesession refuses this after a delegating role (pgedge_safesession.delegating_roles) switches role, so a request leaves nothing behind.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+     set_config      
+---------------------
+ safesession_lk_user
+(1 row)
+
+SELECT ss_lk_try('ALTER ROLE CURRENT_USER SET work_mem = ''7777kB''');
+                                        ss_lk_try                                        
+-----------------------------------------------------------------------------------------
+ 42501: cannot run ALTER ROLE ... SET or RESET after the role switch in this transaction
+(1 row)
+
+COMMIT;
+RESET SESSION AUTHORIZATION;
+ALTER DATABASE :"ss_lk_dbname" OWNER TO :"ss_lk_dbowner";
+SELECT count(*) AS saved_settings FROM pg_db_role_setting
+    WHERE array_to_string(setconfig, ',') LIKE '%7777kB%';
+ saved_settings 
+----------------
+              0
+(1 row)
+
+-------------------------------------------------------------------------
+-- Test 23: a set_config() call SafeSession cannot read before it runs,
+-- here a PL/pgSQL assignment with a name passed in, is refused with its
+-- own message: for a held setting at once, and for a new one when the
+-- statement ends. A call the plan shows keeps the usual message.
+-------------------------------------------------------------------------
+CREATE FUNCTION ss_lk_set_named(name text) RETURNS text
+    LANGUAGE plpgsql AS $$
+DECLARE v text;
+BEGIN
+    v := set_config(name, 'forged', true);
+    RETURN v;
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_set_named(text) TO PUBLIC;
+CREATE DOMAIN ss_lk_posint AS int CHECK (VALUE > 0);
+SET SESSION AUTHORIZATION safesession_lk_auth;
+\set SHOW_CONTEXT never
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+     set_config      |  set_config  
+---------------------+--------------
+ safesession_lk_user | {"sub": "1"}
+(1 row)
+
+SELECT set_config('request.jwt.claims', '{"sub": "2"}', true);
+ERROR:  cannot change request settings after the role switch in this transaction
+HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
+ROLLBACK;
+-- The written call keeps the usual message after one it cannot read
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+     set_config      |  set_config  
+---------------------+--------------
+ safesession_lk_user | {"sub": "1"}
+(1 row)
+
+SELECT set_config(coalesce(current_setting('app.n', true), '') ||
+                  'response.status', '201', true),
+       set_config('request.jwt.claims', '{"sub": "2"}', true);
+ERROR:  cannot change request settings after the role switch in this transaction
+HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+     set_config      |  set_config  
+---------------------+--------------
+ safesession_lk_user | {"sub": "1"}
+(1 row)
+
+SELECT 1::ss_lk_posint,
+       set_config('request.jwt.claims', '{"sub": "2"}', true);
+ERROR:  cannot change request settings after the role switch in this transaction
+HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+     set_config      |  set_config  
+---------------------+--------------
+ safesession_lk_user | {"sub": "1"}
+(1 row)
+
+SELECT ss_lk_set_named('request.jwt.claims');
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
+HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+     set_config      |  set_config  
+---------------------+--------------
+ safesession_lk_user | {"sub": "1"}
+(1 row)
+
+SELECT ss_lk_set_named('request.' || 'runtime');
+ERROR:  cannot set a request setting from a call checked only at run time after the role switch in this transaction
+DETAIL:  Setting "request.runtime" is under a locked prefix and is not held. SafeSession could not read the call before it ran, for example because the setting's name was not known when the statement was planned, the call is in a PL/pgSQL expression other than PERFORM, or the query reads a table or calls a function in FROM.
+HINT:  pgedge_safesession lets a delegating role (pgedge_safesession.delegating_roles) switch role once per transaction; after that, the role and the settings named by pgedge_safesession.locked_setting_prefixes cannot change.
+ROLLBACK;
+\set SHOW_CONTEXT errors
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+     set_config      |  set_config  
+---------------------+--------------
+ safesession_lk_user | {"sub": "1"}
+(1 row)
+
+SELECT count(*) AS notes_seen FROM ss_lk_notes;
+ notes_seen 
+------------
+          1
+(1 row)
+
+COMMIT;
+RESET SESSION AUTHORIZATION;
+DROP FUNCTION ss_lk_session_set(text);
+DROP FUNCTION ss_lk_set_any(text, text, bool);
+DROP FUNCTION ss_lk_set_named(text);
+DROP DOMAIN ss_lk_posint;
 RESET pgedge_safesession.delegating_roles;
 -- Cleanup
 DROP FUNCTION ss_lk_try(text);

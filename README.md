@@ -22,7 +22,8 @@ for restricted roles.
 - Role lock: such a login role can switch role once per
   transaction, and the request's settings, such as
   PostgREST's claims, cannot change or be added after the
-  switch
+  switch, and a request cannot leave settings or prepared
+  statements behind for the next one
 - Role membership inheritance: members of restricted roles
   are also restricted
 - Superuser exemption: superusers are never blocked, except

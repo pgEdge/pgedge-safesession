@@ -65,6 +65,7 @@
 #include "utils/plancache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/timestamp.h"
 #include "utils/varlena.h"
 
 PG_MODULE_MAGIC;
@@ -929,6 +930,9 @@ query_has_blocked_function(Query *query)
 typedef struct LockPlanRead
 {
     const char *name;
+    bool        held;       /* name is a held setting */
+    bool        session;    /* name would be set for the whole session */
+    bool        unread;     /* a call the lock could not judge */
 } LockPlanRead;
 
 static bool set_config_keeps_lock(FuncExpr *fexpr, LockPlanRead *read);
@@ -952,17 +956,26 @@ expr_bars_set_config(Node *node, void *context)
     if (node == NULL)
         return false;
 
-    if (IsA(node, FuncExpr) &&
-        ((FuncExpr *) node)->funcid == F_SET_CONFIG &&
-        !(context == NULL ?
-          is_response_set_config((FuncExpr *) node) :
-          set_config_keeps_lock((FuncExpr *) node, (LockPlanRead *) context)))
-        return true;
-
-    if (IsA(node, CoerceToDomain) ||
+    if ((IsA(node, FuncExpr) &&
+         ((FuncExpr *) node)->funcid == F_SET_CONFIG &&
+         !(context == NULL ?
+           is_response_set_config((FuncExpr *) node) :
+           set_config_keeps_lock((FuncExpr *) node,
+                                 (LockPlanRead *) context))) ||
+        IsA(node, CoerceToDomain) ||
         (IsA(node, Aggref) &&
          ((Aggref *) node)->aggfnoid >= FirstNormalObjectId))
-        return true;
+    {
+        LockPlanRead *read = (LockPlanRead *) context;
+
+        /*
+         * The lock reads on past what it cannot judge, so a later call
+         * whose name is written still gets the usual message.
+         */
+        if (read == NULL || read->name != NULL)
+            return true;
+        read->unread = true;
+    }
 
     return expression_tree_walker(node, expr_bars_set_config, context);
 }
@@ -1045,7 +1058,7 @@ plan_allows_set_config(PlannedStmt *pstmt, void *context)
         if (!plan_node_allows_set_config((Plan *) lfirst(lc), context))
             return false;
     }
-    return true;
+    return context == NULL || !((LockPlanRead *) context)->unread;
 }
 
 /*
@@ -1868,6 +1881,14 @@ check_where_for_session(Query *query)
 #define ROLE_LOCK_NEW_MSG \
     "cannot set a new request setting after the role switch in this" \
     " transaction"
+#define ROLE_LOCK_RUNTIME_MSG \
+    "cannot set a request setting from a call checked only at run time" \
+    " after the role switch in this transaction"
+#define ROLE_LOCK_RUNTIME_DETAIL \
+    "SafeSession could not read the call before it ran, for example" \
+    " because the setting's name was not known when the statement was" \
+    " planned, the call is in a PL/pgSQL expression other than PERFORM," \
+    " or the query reads a table or calls a function in FROM."
 #define ROLE_LOCK_HINT \
     "pgedge_safesession lets a delegating role" \
     " (pgedge_safesession.delegating_roles) switch role once per" \
@@ -1885,6 +1906,20 @@ static Oid                role_lock_role = InvalidOid;
 static bool               role_lock_explicit = false;
 static int                role_lock_nest = 0;     /* subtransaction depth */
 static LocalTransactionId settings_lock_lxid = InvalidLocalTransactionId;
+/*
+ * The look for what the plan reading cannot see (see
+ * recheck_request_settings()), wanted in this transaction.
+ */
+static bool               settings_recheck = false;
+/*
+ * A set_config() call set up outside a plan being started, such as a
+ * PL/pgSQL expression, before the switch in this transaction. PL/pgSQL
+ * keeps such an expression for the rest of the transaction, so a request
+ * can run it again after the switch without it being set up, and read,
+ * again: the hold asks for the look instead.
+ */
+static LocalTransactionId unread_before_switch_lxid =
+    InvalidLocalTransactionId;
 
 /*
  * How deep the executor and utility statements are nested: 0 between
@@ -1912,21 +1947,41 @@ role_lock_reject(const char *msg)
              errhint("%s", ROLE_LOCK_HINT)));
 }
 
+/* Has the statement that switched role in this transaction ended? */
+static bool
+switch_done(void)
+{
+    return IsTransactionState() && settings_lock_lxid == current_lxid();
+}
+
 /* Are the request's settings held in this transaction? */
 static bool
 settings_lock_held(void)
 {
-    return IsTransactionState() && settings_lock_lxid == current_lxid() &&
+    return switch_done() &&
         list_is_set(safesession_locked_setting_prefixes);
 }
 
+/*
+ * SET and a set_config() call the plan shows are refused before they reach
+ * a held setting. A change that gets here came from a call SafeSession
+ * could not read, which asked for the look (settings_recheck) and says so,
+ * or from a function's SET clause. Once the look is asked for, a SET
+ * clause later in the transaction gets that message too.
+ */
 static bool
 check_request_setting(char **newval, void **extra, GucSource source)
 {
     if (!settings_lock_held())
         return true;
     GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
-    GUC_check_errmsg(ROLE_LOCK_SETTINGS_MSG);
+    if (settings_recheck)
+    {
+        GUC_check_errmsg(ROLE_LOCK_RUNTIME_MSG);
+        GUC_check_errdetail(ROLE_LOCK_RUNTIME_DETAIL);
+    }
+    else
+        GUC_check_errmsg(ROLE_LOCK_SETTINGS_MSG);
     GUC_check_errhint(ROLE_LOCK_HINT);
     return false;
 }
@@ -1942,8 +1997,15 @@ check_request_setting(char **newval, void **extra, GucSource source)
 static void
 assign_request_setting(const char *newval, void *extra)
 {
-    if (settings_lock_held())
-        role_lock_reject(ROLE_LOCK_SETTINGS_MSG);
+    if (!settings_lock_held())
+        return;
+    if (settings_recheck)
+        ereport(ERROR,
+                (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                 errmsg(ROLE_LOCK_RUNTIME_MSG),
+                 errdetail(ROLE_LOCK_RUNTIME_DETAIL),
+                 errhint("%s", ROLE_LOCK_HINT)));
+    role_lock_reject(ROLE_LOCK_SETTINGS_MSG);
 }
 
 /* Is this name one of the prefixes, or under one of them? */
@@ -1979,7 +2041,8 @@ name_under_prefixes(const char *name, List *prefixes)
  *   cannot follow (a DO, a CALL, one of its own functions, or a user's
  *   table or view);
  * - at the next lock, after a request did something that may create one
- *   (scan_next_lock; see note_request_may_create).
+ *   (scan_next_lock; see note_request_may_create);
+ * - after a config reload, which may set a new name (scanned_reload).
  *
  * Otherwise only the names the pool sets are looked at: written in a
  * statement run before the switch, noted when it is parsed
@@ -1992,16 +2055,12 @@ static List *noted_setting_names = NIL;     /* in TopMemoryContext */
 static List *held_setting_names = NIL;
 /* The prefix list changed since the held settings' checks were set */
 static bool  held_checks_stale = false;
-/*
- * The look for what the plan reading cannot see (see
- * recheck_request_settings()), wanted in this transaction, and a new
- * setting a savepoint that rolled back made.
- */
-static bool  settings_recheck = false;
+/* A new setting a savepoint that rolled back made; see the look */
 static char  pending_new_setting[256] = "";
 static bool  settings_scanned = false;
 static bool  scan_every_lock = false;
 static bool  scan_next_lock = false;
+static TimestampTz scanned_reload = 0;
 static bool  pool_param_names = false;
 
 /* More names than a pool sets; past it, look at every setting instead. */
@@ -2291,26 +2350,85 @@ refuse_unheld_locked(const char *name)
 }
 
 /*
- * After the hold, may this set_config() call run? Yes when its name is
- * written in it and is outside the locked prefixes, such as
- * response.status, or is held (the held setting's own check refuses the
- * change). A name under a locked prefix that is not held is put in read;
- * a name known only at run time cannot be judged here.
+ * Settings a change for the whole session is allowed for after the switch:
+ * the role lock covers the role, and SET TRANSACTION's three settings last
+ * only for the transaction. Not every transaction_* name: a custom
+ * transaction_app.x, or transaction_timeout, lasts for the session.
+ */
+static bool
+session_change_exempt(const char *name)
+{
+    return pg_strcasecmp(name, "role") == 0 ||
+        pg_strcasecmp(name, "session_authorization") == 0 ||
+        pg_strcasecmp(name, "is_superuser") == 0 ||
+        pg_strcasecmp(name, "transaction_isolation") == 0 ||
+        pg_strcasecmp(name, "transaction_read_only") == 0 ||
+        pg_strcasecmp(name, "transaction_deferrable") == 0;
+}
+
+/* Refuse a change to a setting for the whole session after the switch. */
+static void
+refuse_session_change(const char *name)
+{
+    ereport(ERROR,
+            (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+             errmsg("cannot change setting \"%s\" for the whole session after"
+                    " the role switch in this transaction", name),
+             errdetail("The change would still be there for the next request"
+                       " on the connection."),
+             errhint("Use SET LOCAL, or set_config() with is_local true.")));
+}
+
+/* Refuse what a plan's set_config() call would do; see below. */
+static void
+refuse_read_set_config(LockPlanRead *read)
+{
+    if (read->session)
+        refuse_session_change(read->name);
+    if (read->held)
+        role_lock_reject(ROLE_LOCK_SETTINGS_MSG);
+    refuse_unheld_locked(read->name);
+}
+
+/*
+ * After the switch, may this set_config() call run? Yes when its name is
+ * written in it, is outside the locked prefixes, such as response.status,
+ * and the change lasts only for the transaction. A name under a locked
+ * prefix, held or not, or a change for the whole session, is put in read.
+ * A name known only at run time, or an is_local not written in the call,
+ * cannot be judged here.
  */
 static bool
 set_config_keeps_lock(FuncExpr *fexpr, LockPlanRead *read)
 {
     Node   *name = linitial(fexpr->args);
+    Node   *local = lthird(fexpr->args);
     char   *setting;
 
     if (!IsA(name, Const) || ((Const *) name)->constisnull ||
         ((Const *) name)->consttype != TEXTOID)
         return false;
     setting = TextDatumGetCString(((Const *) name)->constvalue);
-    if (!name_unheld_locked(setting))
+    if (list_is_set(safesession_locked_setting_prefixes) &&
+        name_under_prefixes(setting, get_locked_prefixes()))
+    {
+        read->name = setting;
+        read->held = held_by_us(setting);
+        return false;
+    }
+    if (session_change_exempt(setting))
         return true;
-    read->name = setting;
-    return false;
+    if (!IsA(local, Const))
+        return false;
+    /* set_config() takes a NULL is_local as false */
+    if (((Const *) local)->constisnull ||
+        !DatumGetBool(((Const *) local)->constvalue))
+    {
+        read->name = setting;
+        read->session = true;
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -2342,7 +2460,8 @@ hold_locked_settings(void)
     prefixes = get_locked_prefixes();
 
 #if PG_VERSION_NUM >= 160000
-    if (settings_scanned && !scan_every_lock && !scan_next_lock)
+    if (settings_scanned && !scan_every_lock && !scan_next_lock &&
+        PgReloadTime == scanned_reload)
     {
         foreach(lc, noted_setting_names)
         {
@@ -2374,6 +2493,7 @@ hold_locked_settings(void)
 #endif
         settings_scanned = true;
         scan_next_lock = false;
+        scanned_reload = PgReloadTime;
     }
 
     /* Defining a setting changes the list above, so do it after. */
@@ -2432,6 +2552,24 @@ unheld_locked_setting_changed(struct config_generic *gen, List *prefixes)
 }
 
 /*
+ * Did this transaction change this setting for the whole session? SET, or
+ * set_config() with is_local false, leaves the change on the setting's
+ * stack, as GUC_SET (or GUC_SET_LOCAL once SET LOCAL follows it), until the
+ * transaction ends. Settings under a locked prefix are the hold's, and the
+ * pool's own such change before the switch in the same transaction counts
+ * too.
+ */
+static bool
+session_change_made(struct config_generic *gen, List *prefixes)
+{
+    if (gen->stack == NULL ||
+        (gen->stack->state != GUC_SET && gen->stack->state != GUC_SET_LOCAL))
+        return false;
+    return !session_change_exempt(gen->name) &&
+        !name_under_prefixes(gen->name, prefixes);
+}
+
+/*
  * The look. The plan reading in safesession_object_access() judges every
  * set_config() call whose name is written in it, before it runs. A call it
  * cannot judge, such as one with a name built at run time or one PL/pgSQL
@@ -2440,9 +2578,16 @@ unheld_locked_setting_changed(struct config_generic *gen, List *prefixes)
  * statement from the client and before COMMIT or PREPARE TRANSACTION, it
  * looks over every setting for one under a locked prefix that is not held
  * (see unheld_locked_setting_changed()), and refuses the transaction if it
- * finds one. The statement that set it can read it, but the transaction is
- * undone. Such a call costs a look over every setting each time, so a
- * request should set response.status with PERFORM set_config(...).
+ * finds one, or for a change for the whole session (session_change_made()).
+ * The statement that set it can read it, but the transaction is undone.
+ * Such a call costs a look over every setting each time, so a request
+ * should set response.status with PERFORM set_config(...).
+ *
+ * A change for the whole session made some other way, such as by a C
+ * function that sets a setting itself (pg_trgm's set_limit()), is found
+ * only when such a call asked for the look. Looking at every COMMIT would
+ * cost more than the rest of a request: PostgreSQL 16 and later sort every
+ * setting to list them.
  */
 static void
 recheck_request_settings(void)
@@ -2452,26 +2597,39 @@ recheck_request_settings(void)
     int         i;
     List       *prefixes;
     char       *found = NULL;
+    char       *session = NULL;
 
-    if (!settings_recheck || !settings_lock_held())
+    if (!settings_recheck || !switch_done())
         return;
-    prefixes = get_locked_prefixes();
+    prefixes = list_is_set(safesession_locked_setting_prefixes) ?
+        get_locked_prefixes() : NIL;
 #if PG_VERSION_NUM >= 160000
     vars = get_guc_variables(&nvars);
 #else
     vars = get_guc_variables();
     nvars = GetNumConfigOptions();
 #endif
-    for (i = 0; i < nvars && found == NULL; i++)
+    for (i = 0; i < nvars && found == NULL && session == NULL; i++)
+    {
         if (unheld_locked_setting_changed(vars[i], prefixes))
             found = pstrdup(vars[i]->name);
+        else if (session_change_made(vars[i], prefixes))
+            session = pstrdup(vars[i]->name);
+    }
 #if PG_VERSION_NUM >= 160000
     pfree(vars);
 #endif
+    if (session != NULL)
+        refuse_session_change(session);
     if (found == NULL && pending_new_setting[0] != '\0')
         found = pstrdup(pending_new_setting);
     if (found != NULL)
-        refuse_unheld_locked(found);
+        ereport(ERROR,
+                (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                 errmsg(ROLE_LOCK_RUNTIME_MSG),
+                 errdetail("Setting \"%s\" is under a locked prefix and is"
+                           " not held. %s", found, ROLE_LOCK_RUNTIME_DETAIL),
+                 errhint("%s", ROLE_LOCK_HINT)));
 }
 
 /*
@@ -2914,7 +3072,7 @@ check_role_lock(void)
             sync_held_checks();
         hold_locked_settings();
         settings_lock_lxid = lxid;
-        settings_recheck = false;
+        settings_recheck = (unread_before_switch_lxid == lxid);
         pending_new_setting[0] = '\0';
     }
 }
@@ -3375,25 +3533,37 @@ safesession_object_access(ObjectAccessType access, Oid classId,
 
     /*
      * Every set_config() call is set up first, which runs this hook. After
-     * the hold, the plan being started is read, as above: a call that would
-     * set a name under a locked prefix that is not held is refused before
-     * it runs, and one whose name the plan does not show asks for the look
-     * (recheck_request_settings()).
+     * the switch, the plan being started is read, as above: a call that
+     * would set a name under a locked prefix, or set a setting for the whole
+     * session, is refused before it runs, and one the plan does not show
+     * whole asks for the look (recheck_request_settings()). Before the
+     * switch, a call set up outside a plan is noted for the hold; see
+     * unread_before_switch_lxid.
      */
     if (access == OAT_FUNCTION_EXECUTE && objectId == F_SET_CONFIG &&
-        settings_lock_held())
+        switch_done())
     {
-        LockPlanRead read = {NULL};
+        LockPlanRead read = {NULL, false, false, false};
 
         if (starting_query == NULL ||
             !plan_allows_set_config(starting_query->plannedstmt, &read))
         {
-            if (read.name != NULL)
-                refuse_unheld_locked(read.name);
+            /*
+             * A read-only request's own check below refuses every change
+             * for the whole session, with its own error, so leave that to
+             * it.
+             */
+            if (read.name != NULL &&
+                !(read.session && safesession_block_c_functions &&
+                  current_role_is_restricted()))
+                refuse_read_set_config(&read);
             settings_recheck = true;
             note_request_may_create();
         }
     }
+    else if (access == OAT_FUNCTION_EXECUTE && objectId == F_SET_CONFIG &&
+             starting_query == NULL && IsTransactionState())
+        unread_before_switch_lxid = current_lxid();
 
     if (access != OAT_FUNCTION_EXECUTE ||
         !safesession_block_c_functions ||
@@ -3777,6 +3947,10 @@ refuse_unheld_set(VariableSetStmt *stmt, bool top_level)
                  errhint("%s", ROLE_LOCK_HINT)));
     if (stmt->name != NULL && name_unheld_locked(stmt->name))
         refuse_unheld_locked(stmt->name);
+    /* So the held setting's check is left to set_config() calls */
+    if (stmt->name != NULL && held_by_us(stmt->name) &&
+        name_under_prefixes(stmt->name, get_locked_prefixes()))
+        role_lock_reject(ROLE_LOCK_SETTINGS_MSG);
 }
 
 static void
@@ -3807,6 +3981,76 @@ refuse_unheld_in_utility(Node *parsetree)
             IsA(opt->arg, VariableSetStmt))
             refuse_unheld_set((VariableSetStmt *) opt->arg, false);
     }
+}
+
+/*
+ * After the switch, a utility statement that would leave something for the
+ * next request on the connection, or for later sessions: SET or RESET for
+ * the whole session (settings under a locked prefix are the hold's, above),
+ * PREPARE, DEALLOCATE, and ALTER ROLE or ALTER DATABASE ... SET or RESET.
+ */
+static void
+refuse_leftover(Node *parsetree)
+{
+    const char *what;
+    const char *why;
+
+    switch (nodeTag(parsetree))
+    {
+        case T_VariableSetStmt:
+            {
+                VariableSetStmt *stmt = (VariableSetStmt *) parsetree;
+
+                if (stmt->is_local)
+                    return;
+                if (stmt->kind == VAR_RESET_ALL)
+                    refuse_session_change("ALL");
+                if (stmt->kind == VAR_SET_MULTI)
+                {
+                    /* SET TRANSACTION and SET TRANSACTION SNAPSHOT */
+                    if (strncmp(stmt->name, "TRANSACTION", 11) == 0)
+                        return;
+                    what = "SET SESSION CHARACTERISTICS";
+                    why = "It would change how later transactions on the"
+                        " connection start.";
+                    break;
+                }
+                if (session_change_exempt(stmt->name) ||
+                    (list_is_set(safesession_locked_setting_prefixes) &&
+                     name_under_prefixes(stmt->name, get_locked_prefixes())))
+                    return;
+                refuse_session_change(stmt->name);
+            }
+            return;
+        case T_PrepareStmt:
+            what = "PREPARE";
+            why = "It would leave a prepared statement for the next request"
+                " on the connection.";
+            break;
+        case T_DeallocateStmt:
+            what = "DEALLOCATE";
+            why = "It would remove a prepared statement the connection may"
+                " need for the next request.";
+            break;
+        case T_AlterRoleSetStmt:
+            what = "ALTER ROLE ... SET or RESET";
+            why = "It would change the settings of later sessions.";
+            break;
+        case T_AlterDatabaseSetStmt:
+            what = "ALTER DATABASE ... SET or RESET";
+            why = "It would change the settings of later sessions.";
+            break;
+        default:
+            return;
+    }
+    ereport(ERROR,
+            (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+             errmsg("cannot run %s after the role switch in this"
+                    " transaction", what),
+             errdetail("%s", why),
+             errhint("pgedge_safesession refuses this after a delegating"
+                     " role (pgedge_safesession.delegating_roles) switches"
+                     " role, so a request leaves nothing behind.")));
 }
 
 /*
@@ -3862,7 +4106,6 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
     /* After the hold; see refuse_unheld_in_utility() */
     if (parsetree != NULL && settings_lock_held())
         refuse_unheld_in_utility(parsetree);
-
     /*
      * This hook runs for every utility statement, including COMMIT
      * and ROLLBACK issued after an error. At that point the
@@ -4124,6 +4367,13 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
                 break;
         }
     }
+
+    /*
+     * After the switch; see refuse_leftover(). After the read-only checks
+     * above, so a read-only request keeps their error.
+     */
+    if (parsetree != NULL && switch_done())
+        refuse_leftover(parsetree);
 
     /* Chain to previous hook or standard function, counting the nesting */
     exec_nesting_level++;

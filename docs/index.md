@@ -506,7 +506,43 @@ statement ends, code in it can read the value, so anything
 it does that a rollback does not undo, such as calling
 `nextval()` or writing through `dblink`, stays. Other
 settings, such as `response.status` and
-`response.headers`, can still change.
+`response.headers`, can still change for the transaction.
+When SafeSession cannot read a `set_config()` call before
+it runs, the refusal says so: "cannot set a request setting
+from a call checked only at run time". This happens when
+the setting's name is not known when the statement is
+planned, such as a name built at run time, when the call
+is in a PL/pgSQL expression other than `PERFORM`, such as
+an assignment, `IF` or `RETURN`, or in the arguments of
+`CALL` or `EXECUTE`, or when the statement has a step
+SafeSession does not read, such as `INSERT`, `UPDATE`,
+reading a table, `UNION`, a window function, `VALUES` or a
+function in `FROM`. A name passed in as a parameter is
+often known by then, so its refusal can give either
+message.
+
+A request also cannot leave a setting change or a prepared
+statement behind for the next request on the connection,
+or for later sessions. After the switch, these are refused
+with SQLSTATE 42501:
+
+- A change to any setting for the whole session: `SET`
+  without `LOCAL`, `RESET`, `RESET ALL`, `SET SESSION
+  CHARACTERISTICS`, or `set_config()` with `is_local`
+  false or null, also with a name built at run time. `SET
+  LOCAL`, including `SET LOCAL name TO DEFAULT`,
+  `set_config(..., true)` and `SET TRANSACTION` still work.
+- `PREPARE`, which would leave a prepared statement, and
+  `DEALLOCATE`, which would remove one the pool uses.
+- `ALTER ROLE` and `ALTER DATABASE ... SET` or `RESET`,
+  which would change the settings of later sessions.
+
+The next request on the connection then works as usual. A
+read-only request keeps the read-only error where the
+read-only rule already refuses, such as `SET
+default_transaction_read_only = off`, `ALTER ROLE ... SET`
+or `set_config(..., false)`. Its `PREPARE` gets the
+`PREPARE` error.
 
 - The pool must set the request's settings in the same
   transaction as the role switch, in the switch statement
@@ -550,6 +586,36 @@ settings, such as `response.status` and
   later, such a call also makes the next switch on the
   connection look over every setting; that takes longer the
   more settings the session has, about 17 ms with 50,000.
+- A new name under a locked prefix that the session gets
+  some other way than by `SET` or `set_config()`, such as
+  from a config reload that reaches it during a request,
+  or from the pool's own `CREATE FUNCTION ... SET` or
+  `ALTER ROLE ... SET`, is not held at once. A request
+  that is then checked when its statement ends is refused,
+  as if it had set the name. The next request works, and
+  the name is held from then on.
+- The pool's own change to a setting for the whole session,
+  made before the switch in the same transaction, is
+  refused too when the request then makes a `set_config()`
+  call that is checked when the statement ends. PostgREST
+  makes no such change.
+- A C function that changes a setting for the whole
+  session itself, such as `pg_trgm`'s old `set_limit()`,
+  is refused only when the request also makes a
+  `set_config()` call that is checked when the statement
+  ends. Otherwise the change stays for the next request.
+  Use `SET LOCAL pg_trgm.similarity_threshold` instead.
+- Other things that can outlast a request are not refused:
+  `LISTEN`, a temporary table, a cursor `WITH HOLD`, an
+  advisory lock taken for the session, or the state of
+  `random()`, which `SET LOCAL seed` or `setseed()` can
+  set. A custom setting outside the locked prefixes, such
+  as `app.owner`, that a request sets for the first time,
+  even with `SET LOCAL`, stays defined for the session
+  with an empty value: on the next request,
+  `current_setting('app.owner', true)` gives an empty
+  string, not null. PostgreSQL does this, and `NULLIF(...,
+  '')` reads both the same.
 - When `locked_setting_prefixes` changes, a session that is
   already open follows the new list from its next request:
   a setting whose prefix was removed can be set again. An
