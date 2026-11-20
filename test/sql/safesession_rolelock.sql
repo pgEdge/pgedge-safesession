@@ -700,6 +700,197 @@ DROP FUNCTION ss_lk_after();
 DROP FUNCTION ss_lk_status();
 RESET pgedge_safesession.delegating_roles;
 
+-------------------------------------------------------------------------
+-- Test 20: after the switch, a request cannot change a setting for the
+-- whole session, with SET, RESET or set_config(..., false or null), also
+-- with a name built at run time or one that starts with transaction_
+-- (only SET TRANSACTION's own settings are let through), so nothing is
+-- left for the next request on the connection. SET LOCAL,
+-- set_config(..., true) and SET TRANSACTION still work, and after each
+-- refusal the next request works.
+-------------------------------------------------------------------------
+CREATE FUNCTION ss_lk_session_set(name text) RETURNS text
+    LANGUAGE plpgsql AS $$
+DECLARE v text;
+BEGIN
+    v := set_config(name, 'leaked', false);
+    RETURN v;
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_session_set(text) TO PUBLIC;
+CREATE FUNCTION ss_lk_set_any(name text, value text, local bool)
+    RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN set_config(name, value, local);
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_set_any(text, text, bool) TO PUBLIC;
+SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SET app.leak = 'leaked';
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT set_config('app.leak', 'leaked', false);
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT set_config('app.leak', 'leaked', NULL);
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SET transaction_app.leak = 'leaked';
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_session_set('app.' || 'leak');
+ROLLBACK;
+-- PL/pgSQL keeps the helper's set_config() from the pool's call before the
+-- switch; the request's call after it is still checked
+BEGIN;
+SELECT ss_lk_set_any('app.pool', 'pool', true);
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_set_any('app.leak', 'leaked', false);
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+RESET search_path;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_try('SET app.leak = ''leaked''');
+SET TRANSACTION READ ONLY;
+SET LOCAL app.leak = 'local';
+SELECT set_config('app.other', 'local', true) AS local_set;
+COMMIT;
+RESET SESSION AUTHORIZATION;
+SELECT coalesce(current_setting('app.leak', true), '') AS app_leak,
+       coalesce(current_setting('app.other', true), '') AS app_other,
+       coalesce(current_setting('transaction_app.leak', true), '')
+           AS transaction_app_leak;
+
+-------------------------------------------------------------------------
+-- Test 21: after the switch, a request cannot PREPARE, which would leave
+-- a prepared statement for the next request, or DEALLOCATE, which would
+-- remove one the pool uses. The pool's own statement still runs.
+-------------------------------------------------------------------------
+SET SESSION AUTHORIZATION safesession_lk_auth;
+PREPARE ss_lk_pool AS SELECT current_user::text AS who;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+PREPARE ss_lk_mine AS SELECT 1;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+DEALLOCATE ss_lk_pool;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+DEALLOCATE ALL;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_try('PREPARE ss_lk_mine AS SELECT 1');
+EXECUTE ss_lk_pool;
+COMMIT;
+SELECT name FROM pg_prepared_statements ORDER BY name;
+DEALLOCATE ss_lk_pool;
+RESET SESSION AUTHORIZATION;
+
+-------------------------------------------------------------------------
+-- Test 22: after the switch, a request cannot save settings for later
+-- sessions with ALTER ROLE or ALTER DATABASE ... SET or RESET, even for
+-- its own role or a database it owns.
+-------------------------------------------------------------------------
+SELECT current_database() AS ss_lk_dbname,
+       datdba::regrole::text AS ss_lk_dbowner
+    FROM pg_database WHERE datname = current_database() \gset
+ALTER DATABASE :"ss_lk_dbname" OWNER TO safesession_lk_user;
+SET SESSION AUTHORIZATION safesession_lk_auth;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+ALTER ROLE CURRENT_USER SET work_mem = '7777kB';
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+ALTER ROLE CURRENT_USER RESET ALL;
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+ALTER DATABASE :"ss_lk_dbname" SET work_mem = '7777kB';
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_try('ALTER ROLE CURRENT_USER SET work_mem = ''7777kB''');
+COMMIT;
+RESET SESSION AUTHORIZATION;
+ALTER DATABASE :"ss_lk_dbname" OWNER TO :"ss_lk_dbowner";
+SELECT count(*) AS saved_settings FROM pg_db_role_setting
+    WHERE array_to_string(setconfig, ',') LIKE '%7777kB%';
+
+-------------------------------------------------------------------------
+-- Test 23: a set_config() call SafeSession cannot read before it runs,
+-- here a PL/pgSQL assignment with a name passed in, is refused with its
+-- own message: for a held setting at once, and for a new one when the
+-- statement ends. A call the plan shows keeps the usual message.
+-------------------------------------------------------------------------
+CREATE FUNCTION ss_lk_set_named(name text) RETURNS text
+    LANGUAGE plpgsql AS $$
+DECLARE v text;
+BEGIN
+    v := set_config(name, 'forged', true);
+    RETURN v;
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_set_named(text) TO PUBLIC;
+CREATE DOMAIN ss_lk_posint AS int CHECK (VALUE > 0);
+SET SESSION AUTHORIZATION safesession_lk_auth;
+\set SHOW_CONTEXT never
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT set_config('request.jwt.claims', '{"sub": "2"}', true);
+ROLLBACK;
+-- The written call keeps the usual message after one it cannot read
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT set_config(coalesce(current_setting('app.n', true), '') ||
+                  'response.status', '201', true),
+       set_config('request.jwt.claims', '{"sub": "2"}', true);
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT 1::ss_lk_posint,
+       set_config('request.jwt.claims', '{"sub": "2"}', true);
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT ss_lk_set_named('request.jwt.claims');
+ROLLBACK;
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT ss_lk_set_named('request.' || 'runtime');
+ROLLBACK;
+\set SHOW_CONTEXT errors
+BEGIN;
+SELECT set_config('role', 'safesession_lk_user', true),
+       set_config('request.jwt.claims', '{"sub": "1"}', true);
+SELECT count(*) AS notes_seen FROM ss_lk_notes;
+COMMIT;
+RESET SESSION AUTHORIZATION;
+DROP FUNCTION ss_lk_session_set(text);
+DROP FUNCTION ss_lk_set_any(text, text, bool);
+DROP FUNCTION ss_lk_set_named(text);
+DROP DOMAIN ss_lk_posint;
+RESET pgedge_safesession.delegating_roles;
+
 -- Cleanup
 DROP FUNCTION ss_lk_try(text);
 DROP FUNCTION ss_lk_set_role();
