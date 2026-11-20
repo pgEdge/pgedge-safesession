@@ -231,6 +231,30 @@ whole table.
   view with its own `WHERE` inside a `BEGIN ATOMIC`
   function.
 
+### `pgedge_safesession.locked_setting_prefixes`
+
+Default: `request`
+
+Setting prefixes whose settings a delegated request cannot
+change after the role switch. PostgREST puts the request's
+claims, method, path and headers under `request`, and
+row-level security policies and functions such as
+`auth.uid()` trust them. See [Role Lock](#role-lock).
+
+Each entry is one or more names joined by dots, such as
+`request` or `app.user`, with no trailing dot. An entry
+covers every setting under it: `app.user` covers
+`app.user.id`, not `app.username`. The settings the pool
+sets under these prefixes are held, and no other setting
+under them, new or defined by another extension, can be
+set after the switch. Only custom settings, whose names
+have a dot, are covered. An empty list holds no settings;
+the role is still locked. Do not list a prefix that a
+library uses for its own settings; see
+[Role Lock](#role-lock).
+
+It has no effect unless `delegating_roles` is set.
+
 ### `pgedge_safesession.block_dml`
 
 Default: `on`
@@ -435,10 +459,108 @@ gets an error on each read-only request; switch with the
 protocol's prepared statements, `SET LOCAL ROLE`, or an
 unprepared `set_config()`.
 
-This release does not stop a request from switching role a
-second time in the same transaction, for example with
-`SET ROLE`, `RESET ROLE` or `RESET SESSION AUTHORIZATION`.
-Turn on `delegating_roles` only with a release that does.
+A request cannot switch role a second time in the same
+transaction, or change its claims; see
+[Role Lock](#role-lock).
+
+### Role Lock
+
+A delegating session may switch role once in each
+transaction. The first change of role takes the lock, and
+any later change in the same transaction is refused with
+SQLSTATE 42501. PostgREST answers it with 403, or with 401
+when the request has no token. Every way to change role is
+covered: `SET ROLE`, `SET LOCAL ROLE`, `RESET ROLE`,
+`set_config('role', ...)`, a function's `SET role` clause,
+and `SET SESSION AUTHORIZATION` and its `RESET`. Setting
+the same role again is refused too, and so is going from a
+role set with `SET ROLE` back to no role, even when both
+mean the same user. The next transaction starts with no
+lock, so the next request on the connection works.
+
+When the statement that switched role ends, every setting
+the session already has under a prefix in
+`locked_setting_prefixes` is held until the transaction
+ends. It keeps its value, and `set_config()`, `SET`,
+`SET LOCAL` and `RESET` on it are refused with SQLSTATE
+42501.
+
+No other setting under those prefixes can be set after the
+switch either: not a new one, such as an older PostgREST
+claim like `request.jwt.claim.org` that the pool did not
+set, and not one another extension defines. This is
+refused with SQLSTATE 42501 whichever way it is tried:
+`set_config()`, `SET`, `SET LOCAL`, `RESET`, a function's
+`SET` clause, a view or a function body, or `CREATE` or
+`ALTER FUNCTION`, `ALTER ROLE` or `ALTER DATABASE ... SET`.
+`RESET ALL` is refused too. A `set_config()` call whose
+name is built at run time, or that PL/pgSQL runs as an
+expression on its own (`v := set_config(...)`), is checked
+when the statement ends, after its `AFTER` triggers, and
+before `COMMIT`; such a setting then refuses the whole
+transaction, so what the statement wrote is undone. A new
+name is found even when PostgreSQL has already undone its
+value, as at the end of a command such as `REFRESH
+MATERIALIZED VIEW`, `CREATE INDEX` or `ANALYZE`. Until the
+statement ends, code in it can read the value, so anything
+it does that a rollback does not undo, such as calling
+`nextval()` or writing through `dblink`, stays. Other
+settings, such as `response.status` and
+`response.headers`, can still change.
+
+- The pool must set the request's settings in the same
+  transaction as the role switch, in the switch statement
+  or before it. PostgREST does. Once a setting has been
+  held on a connection, the pool cannot set it in a later
+  statement than the switch.
+- A superuser pool may switch with `SET SESSION
+  AUTHORIZATION` or its `RESET`. The role PostgreSQL sets
+  right after, such as a role the login has by default, is
+  part of the same switch.
+- A switch inside a savepoint that rolls back does not
+  count, so the pool can switch again. A request's own
+  savepoint cannot undo the lock, and a setting a rolled
+  back savepoint created is still found.
+- SECURITY DEFINER functions work as before. PostgreSQL
+  does not let them change role.
+- Sessions that are not delegating are not locked. A
+  transaction is judged once, as it is at its first change
+  of role, so a superuser not on `delegating_roles` that
+  becomes a login that is, with `SET SESSION
+  AUTHORIZATION`, is not locked, as when `pg_restore`
+  restores objects owned by that login.
+- A function that sets a setting of its own should use a
+  prefix that is not locked, such as `app`.
+- In a parallel worker of a delegating session, a function
+  whose `SET` clause sets the role,
+  `session_authorization` or a setting under a locked
+  prefix is refused with SQLSTATE 42501, before the switch
+  too, since the worker cannot see the lock. Other `SET`
+  clauses work in a worker. Running without a worker does
+  not help a function whose `SET` clause changes the role or
+  a locked setting: after the switch, the role lock refuses
+  it there too.
+- Each `set_config()` call that is checked when the
+  statement ends, such as `v := set_config(...)`, makes
+  SafeSession look over every setting the session has, at
+  the end of each later statement of the transaction and
+  each time a savepoint or exception block rolls back. Set
+  `response.status` with `PERFORM set_config(...)`
+  instead, which costs nothing extra. On PostgreSQL 16 and
+  later, such a call also makes the next switch on the
+  connection look over every setting; that takes longer the
+  more settings the session has, about 17 ms with 50,000.
+- When `locked_setting_prefixes` changes, a session that is
+  already open follows the new list from its next request:
+  a setting whose prefix was removed can be set again. An
+  empty list holds nothing.
+- Do not list a prefix that a library uses for its own
+  settings, such as `pg_trgm`. If the pool sets such a
+  setting before the library is loaded in the session,
+  SafeSession holds the name, and the library then cannot
+  load in that session. A change to such a setting made
+  inside a command such as `CREATE INDEX` is also not
+  found, since PostgreSQL undoes it before the look.
 
 ### Superuser Exemption
 
