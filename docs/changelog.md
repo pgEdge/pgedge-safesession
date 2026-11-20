@@ -18,6 +18,9 @@ and this project adheres to
   delegated requests acting as these roles only
 - `pgedge_safesession.read_only_roles`, the new name of
   `pgedge_safesession.roles`, which keeps working
+- `pgedge_safesession.require_where_roles`: an `UPDATE` or
+  `DELETE` with no `WHERE` clause is refused for these login
+  roles, with the same error as safeupdate (SQLSTATE 21000)
 - A read-only delegated request may call `set_config()` on a
   `response.*` setting for the transaction, from a simple
   statement that reads no table (see Delegating Sessions)
@@ -27,7 +30,7 @@ and this project adheres to
   `delegating_roles`
 - `SET CONSTRAINTS` is allowed in read-only sessions
   (PostgREST sends it to roll a request back)
-- `pg_settings` lists the three new settings
+- `pg_settings` lists the four new settings
 
 ### Changed
 

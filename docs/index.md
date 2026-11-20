@@ -178,6 +178,59 @@ role that must never write, however it is reached.
 It has no effect unless `delegating_roles` is set; the
 server log says so.
 
+### `pgedge_safesession.require_where_roles`
+
+Default: empty
+
+Login roles whose `UPDATE` and `DELETE` must have a
+`WHERE` clause. A session whose login role is one of these
+roles, or a member of one that can act as it, has an
+`UPDATE` or `DELETE` with no `WHERE` clause refused, with
+SQLSTATE 21000 and `UPDATE requires a WHERE clause` (or
+`DELETE`). PostgREST answers it with 400. Set it to the
+pool's login role, such as PostgREST's authenticator, so
+that one API call with no filter cannot change or delete a
+whole table.
+
+- It also applies inside `WITH` queries and in functions
+  the session calls, `SECURITY DEFINER` ones included, so
+  an app function with an unfiltered `DELETE` stops
+  working for these logins.
+- The login role is what counts, so `SET ROLE` does not
+  change it. A superuser pool that switches with
+  `SET SESSION AUTHORIZATION` is still covered, and so is
+  a superuser that is listed by name. A superuser does not
+  count as a member of a listed role.
+- On PostgreSQL 16 and later, a member counts only if it
+  can `SET ROLE` to the listed role. The `ADMIN`-only
+  membership PostgreSQL gives a `CREATEROLE` role over a
+  role it creates does not count.
+- A read-only session's `UPDATE` or `DELETE` gets the
+  read-only error instead, which PostgREST answers with
+  405. It is refused as soon as it is parsed or planned, so
+  no unchecked plan is kept for later, once the session can
+  write.
+- A cached plan is checked again when the setting, a role's
+  memberships, the database's owner or the session user
+  changes, even a change of session user made in the middle
+  of a statement with `set_config()`. A plan made earlier in
+  the same transaction, such as by a SQL function that plans
+  all its statements before it runs them, is refused when it
+  runs once the rule applies.
+- Any `WHERE` clause counts, even `WHERE true`. This
+  guards against mistakes; row-level security still
+  decides which rows a request can change.
+- A view's own `WHERE` does not count as the statement's.
+- Unlike safeupdate, an `UPDATE` or `DELETE` with no
+  `WHERE` that a rule adds, or that a plain `EXPLAIN`
+  shows, is refused too. Creating a SQL function whose
+  body has one is refused while `check_function_bodies` is
+  on.
+- Not covered: `MERGE` and `TRUNCATE`, which PostgREST
+  never sends, and an unfiltered `UPDATE` or `DELETE` on a
+  view with its own `WHERE` inside a `BEGIN ATOMIC`
+  function.
+
 ### `pgedge_safesession.block_dml`
 
 Default: `on`
@@ -395,7 +448,8 @@ session user, so SECURITY DEFINER functions owned by
 superusers cannot bypass restrictions when called from a
 restricted session. A superuser login role on
 `delegating_roles` is judged by the role it acts as once
-it switches.
+it switches. `require_where_roles` is not a read-only
+restriction and covers a listed superuser too.
 
 ### SECURITY DEFINER Functions
 
