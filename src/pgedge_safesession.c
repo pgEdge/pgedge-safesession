@@ -1062,6 +1062,68 @@ plan_allows_set_config(PlannedStmt *pstmt, void *context)
 }
 
 /*
+ * Does this plan call set_config() itself? Only what a plan that sets
+ * settings is made of is read; elsewhere a call counts as not found, which
+ * asks for the look when none is needed but never skips it. If the plan
+ * does not call it, a set_config() set up while it starts comes from code
+ * the plan runs, such as a function a partitioned table's pruning calls.
+ */
+static bool
+set_config_call_walker(Node *node, void *context)
+{
+    if (node == NULL)
+        return false;
+    if (IsA(node, FuncExpr) && ((FuncExpr *) node)->funcid == F_SET_CONFIG)
+        return true;
+    return expression_tree_walker(node, set_config_call_walker, context);
+}
+
+static bool plan_node_calls_set_config(Plan *plan);
+
+static bool
+plan_list_calls_set_config(List *plans)
+{
+    ListCell   *lc;
+
+    foreach(lc, plans)
+    {
+        if (plan_node_calls_set_config((Plan *) lfirst(lc)))
+            return true;
+    }
+    return false;
+}
+
+static bool
+plan_node_calls_set_config(Plan *plan)
+{
+    if (plan == NULL)
+        return false;
+    if (set_config_call_walker((Node *) plan->targetlist, NULL) ||
+        set_config_call_walker((Node *) plan->qual, NULL) ||
+        (IsA(plan, Result) &&
+         set_config_call_walker(((Result *) plan)->resconstantqual, NULL)) ||
+        (IsA(plan, FunctionScan) &&
+         set_config_call_walker((Node *) ((FunctionScan *) plan)->functions,
+                                NULL)) ||
+        (IsA(plan, SubqueryScan) &&
+         plan_node_calls_set_config(((SubqueryScan *) plan)->subplan)) ||
+        (IsA(plan, Append) &&
+         plan_list_calls_set_config(((Append *) plan)->appendplans)) ||
+        (IsA(plan, MergeAppend) &&
+         plan_list_calls_set_config(((MergeAppend *) plan)->mergeplans)))
+        return true;
+    return plan_node_calls_set_config(plan->lefttree) ||
+        plan_node_calls_set_config(plan->righttree);
+}
+
+static bool
+plan_calls_set_config(PlannedStmt *pstmt)
+{
+    return plan_node_calls_set_config(pstmt->planTree) ||
+        plan_list_calls_set_config(pstmt->subplans);
+}
+
+/*
  * Cache of the configured roles resolved to OIDs.
  *
  * current_role_is_restricted() runs on every statement, and re-parsing
@@ -1912,13 +1974,14 @@ static LocalTransactionId settings_lock_lxid = InvalidLocalTransactionId;
  */
 static bool               settings_recheck = false;
 /*
- * A set_config() call set up outside a plan being started, such as a
- * PL/pgSQL expression, before the switch in this transaction. PL/pgSQL
- * keeps such an expression for the rest of the transaction, so a request
- * can run it again after the switch without it being set up, and read,
- * again: the hold asks for the look instead.
+ * A set_config() call set up in this transaction that no plan being
+ * started showed, such as a PL/pgSQL expression. PL/pgSQL keeps such an
+ * expression for the rest of the transaction, so a request can run it
+ * again after the switch, or after a second switch once a savepoint has
+ * rolled back the first, without it being set up, and read, again: the
+ * hold asks for the look instead.
  */
-static LocalTransactionId unread_before_switch_lxid =
+static LocalTransactionId unread_set_config_lxid =
     InvalidLocalTransactionId;
 
 /*
@@ -3072,7 +3135,7 @@ check_role_lock(void)
             sync_held_checks();
         hold_locked_settings();
         settings_lock_lxid = lxid;
-        settings_recheck = (unread_before_switch_lxid == lxid);
+        settings_recheck = (unread_set_config_lxid == lxid);
         pending_new_setting[0] = '\0';
     }
 }
@@ -3537,8 +3600,9 @@ safesession_object_access(ObjectAccessType access, Oid classId,
      * would set a name under a locked prefix, or set a setting for the whole
      * session, is refused before it runs, and one the plan does not show
      * whole asks for the look (recheck_request_settings()). Before the
-     * switch, a call set up outside a plan is noted for the hold; see
-     * unread_before_switch_lxid.
+     * switch, a call set up outside a plan, or by code a plan runs as it
+     * starts, such as a partitioned table's pruning, is noted for the
+     * hold; see unread_set_config_lxid.
      */
     if (access == OAT_FUNCTION_EXECUTE && objectId == F_SET_CONFIG &&
         switch_done())
@@ -3558,12 +3622,15 @@ safesession_object_access(ObjectAccessType access, Oid classId,
                   current_role_is_restricted()))
                 refuse_read_set_config(&read);
             settings_recheck = true;
+            unread_set_config_lxid = current_lxid();
             note_request_may_create();
         }
     }
     else if (access == OAT_FUNCTION_EXECUTE && objectId == F_SET_CONFIG &&
-             starting_query == NULL && IsTransactionState())
-        unread_before_switch_lxid = current_lxid();
+             IsTransactionState() &&
+             (starting_query == NULL ||
+              !plan_calls_set_config(starting_query->plannedstmt)))
+        unread_set_config_lxid = current_lxid();
 
     if (access != OAT_FUNCTION_EXECUTE ||
         !safesession_block_c_functions ||
@@ -4374,6 +4441,19 @@ safesession_ProcessUtility(PlannedStmt *pstmt,
      */
     if (parsetree != NULL && switch_done())
         refuse_leftover(parsetree);
+
+    /*
+     * Before PostgreSQL 18, a CALL or DO sent outside a transaction block,
+     * such as in a pipeline with no BEGIN, may run COMMIT or ROLLBACK. That
+     * ends the transaction that switched, and the lock with it, while the
+     * request's code runs on as the login. After the switch, run it as
+     * inside a block, where transaction control is refused.
+     */
+    if (context == PROCESS_UTILITY_TOPLEVEL && parsetree != NULL &&
+        (IsA(parsetree, CallStmt) || IsA(parsetree, DoStmt)) &&
+        IsTransactionState() && role_lock_lxid == current_lxid() &&
+        OidIsValid(role_lock_role))
+        context = PROCESS_UTILITY_QUERY;
 
     /* Chain to previous hook or standard function, counting the nesting */
     exec_nesting_level++;

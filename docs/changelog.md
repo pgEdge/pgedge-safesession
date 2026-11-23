@@ -55,6 +55,9 @@ and this project adheres to
   SafeSession cannot read before it runs, such as one whose
   setting name is built at run time, is refused with its
   own message
+- After the role switch, a `CALL` or `DO` cannot run
+  `COMMIT` or `ROLLBACK`, also when the request is sent
+  with no `BEGIN`
 - `pg_settings` lists the five new settings
 
 ### Changed

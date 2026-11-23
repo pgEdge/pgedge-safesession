@@ -511,15 +511,17 @@ When SafeSession cannot read a `set_config()` call before
 it runs, the refusal says so: "cannot set a request setting
 from a call checked only at run time". This happens when
 the setting's name is not known when the statement is
-planned, such as a name built at run time, when the call
-is in a PL/pgSQL expression other than `PERFORM`, such as
-an assignment, `IF` or `RETURN`, or in the arguments of
-`CALL` or `EXECUTE`, or when the statement has a step
-SafeSession does not read, such as `INSERT`, `UPDATE`,
-reading a table, `UNION`, a window function, `VALUES` or a
+planned, such as a name built at run time, when the call is
+in a PL/pgSQL expression other than `PERFORM`, such as an
+assignment, `IF` or `RETURN`, or in the arguments of `CALL`
+or `EXECUTE`, or when the statement has a step SafeSession
+does not read, such as `INSERT`, `UPDATE`, reading a table,
+`UNION`, `GROUP BY`, a window function, `VALUES` or a
 function in `FROM`. A name passed in as a parameter is
 often known by then, so its refusal can give either
-message.
+message. Once such a call has run in a transaction, even
+one the pool made before the switch, a function's `SET`
+clause on a held name gets this message too.
 
 A request also cannot leave a setting change or a prepared
 statement behind for the next request on the connection,
@@ -533,7 +535,10 @@ with SQLSTATE 42501:
   LOCAL`, including `SET LOCAL name TO DEFAULT`,
   `set_config(..., true)` and `SET TRANSACTION` still work.
 - `PREPARE`, which would leave a prepared statement, and
-  `DEALLOCATE`, which would remove one the pool uses.
+  `DEALLOCATE`, which would remove one the pool uses. A
+  client library that removes its own prepared statements
+  with `DEALLOCATE` during a request is refused too, so
+  turn off such a statement cache for the pool's login.
 - `ALTER ROLE` and `ALTER DATABASE ... SET` or `RESET`,
   which would change the settings of later sessions.
 
@@ -557,6 +562,10 @@ or `set_config(..., false)`. Its `PREPARE` gets the
   count, so the pool can switch again. A request's own
   savepoint cannot undo the lock, and a setting a rolled
   back savepoint created is still found.
+- After the switch, a `CALL` or `DO` runs as inside a
+  transaction block, so a `COMMIT` or `ROLLBACK` in it is
+  refused, also when the pool sends the request with no
+  `BEGIN`, such as in a pipeline.
 - SECURITY DEFINER functions work as before. PostgreSQL
   does not let them change role.
 - Sessions that are not delegating are not locked. A
@@ -597,8 +606,17 @@ or `set_config(..., false)`. Its `PREPARE` gets the
 - The pool's own change to a setting for the whole session,
   made before the switch in the same transaction, is
   refused too when the request then makes a `set_config()`
-  call that is checked when the statement ends. PostgREST
-  makes no such change.
+  call that is checked when the statement ends. If the pool
+  itself made such a call before the switch, for example
+  in a PL/pgSQL function, the switch statement is refused.
+  PostgREST makes no such change.
+- A pool statement, or a statement in a function the pool
+  calls, that calls `set_config()` itself and, as it
+  starts, also runs a PL/pgSQL function that calls
+  `set_config()`, for example to prune a partitioned
+  table, before the switch: if the request then runs that
+  function again in the same transaction, its call is not
+  checked. PostgREST sends no such statement.
 - A C function that changes a setting for the whole
   session itself, such as `pg_trgm`'s old `set_limit()`,
   is refused only when the request also makes a

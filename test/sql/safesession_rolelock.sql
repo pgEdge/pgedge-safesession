@@ -723,6 +723,16 @@ BEGIN
     RETURN set_config(name, value, local);
 END $$;
 GRANT EXECUTE ON FUNCTION ss_lk_set_any(text, text, bool) TO PUBLIC;
+CREATE FUNCTION ss_lk_pick(name text, value text, local bool)
+    RETURNS int LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN length(set_config(name, value, local));
+END $$;
+GRANT EXECUTE ON FUNCTION ss_lk_pick(text, text, bool) TO PUBLIC;
+CREATE TABLE ss_lk_part (k int) PARTITION BY LIST (k);
+CREATE TABLE ss_lk_part1 PARTITION OF ss_lk_part FOR VALUES IN (1);
+CREATE TABLE ss_lk_part4 PARTITION OF ss_lk_part FOR VALUES IN (4);
+GRANT SELECT ON ss_lk_part TO PUBLIC;
 SET pgedge_safesession.delegating_roles = 'safesession_lk_auth';
 SET SESSION AUTHORIZATION safesession_lk_auth;
 BEGIN;
@@ -751,6 +761,33 @@ BEGIN;
 SELECT ss_lk_set_any('app.pool', 'pool', true);
 SELECT set_config('role', 'safesession_lk_user', true);
 SELECT ss_lk_set_any('app.leak', 'leaked', false);
+ROLLBACK;
+-- the same, when the helper first runs as the pool's statement starts, to
+-- prune a partitioned table
+PREPARE ss_lk_pool(text) AS
+    SELECT count(*) FROM ss_lk_part WHERE k = ss_lk_pick($1, 'pool', true);
+BEGIN;
+SET LOCAL plan_cache_mode = force_generic_plan;
+EXECUTE ss_lk_pool('app.pool');
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_pick('app.leak', 'leaked', false);
+ROLLBACK;
+DEALLOCATE ss_lk_pool;
+-- the same, when the helper first runs after a switch that a savepoint
+-- then rolls back, and the pool switches again
+BEGIN;
+SAVEPOINT retry;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_set_any('app.pool', 'pool', true);
+ROLLBACK TO retry;
+SELECT set_config('role', 'safesession_lk_user', true);
+SELECT ss_lk_set_any('app.leak', 'leaked', false);
+ROLLBACK;
+-- the pool's own change before a switch statement that calls set_config()
+-- under UNION ALL still works
+BEGIN;
+SET statement_timeout = '5s';
+SELECT set_config('role', 'safesession_lk_user', true) UNION ALL SELECT 'x';
 ROLLBACK;
 BEGIN;
 SELECT set_config('role', 'safesession_lk_user', true);
@@ -887,6 +924,8 @@ COMMIT;
 RESET SESSION AUTHORIZATION;
 DROP FUNCTION ss_lk_session_set(text);
 DROP FUNCTION ss_lk_set_any(text, text, bool);
+DROP FUNCTION ss_lk_pick(text, text, bool);
+DROP TABLE ss_lk_part;
 DROP FUNCTION ss_lk_set_named(text);
 DROP DOMAIN ss_lk_posint;
 RESET pgedge_safesession.delegating_roles;
