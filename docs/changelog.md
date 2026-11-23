@@ -44,6 +44,20 @@ and this project adheres to
 - In a parallel worker of a delegating session, a function
   whose `SET` clause sets the role or a setting under a
   locked prefix is refused (see Role Lock)
+- After the role switch, a request cannot leave a setting
+  change or a prepared statement for the next request on
+  the connection: a change to a setting for the whole
+  session, `PREPARE`, `DEALLOCATE`, and `ALTER ROLE` or
+  `ALTER DATABASE ... SET` or `RESET` are refused with
+  SQLSTATE 42501, or with the read-only error where a
+  read-only request already got it (see Role Lock)
+- A `set_config()` call of a request setting that
+  SafeSession cannot read before it runs, such as one whose
+  setting name is built at run time, is refused with its
+  own message
+- After the role switch, a `CALL` or `DO` cannot run
+  `COMMIT` or `ROLLBACK`, also when the request is sent
+  with no `BEGIN`
 - `pg_settings` lists the five new settings
 
 ### Changed

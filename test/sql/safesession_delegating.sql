@@ -378,7 +378,8 @@ BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
 SELECT ss_assign_status();
 ROLLBACK;
--- A request that can write is not affected
+-- A request that can write is refused too, by the role lock: the value
+-- would still be there for the next request
 BEGIN;
 SELECT set_config('role', 'safesession_writer', true);
 SELECT ss_uses_var();
@@ -501,16 +502,30 @@ SELECT set_config('role', 'safesession_anon', true);
 SELECT ss_takes_xid();
 ROLLBACK;
 -- The same for a plan that sets a value for the whole session, cached by
--- a PL/pgSQL function or prepared by a writer
+-- a PL/pgSQL function or prepared by a writer. A request cannot set a
+-- value for the whole session, or PREPARE, after the switch, so the pool's
+-- own switch statement prepares, after it switches.
+\set SHOW_CONTEXT never
 BEGIN;
 SELECT set_config('role', 'safesession_writer', true);
 SELECT ss_set_lang();
-PREPARE ss_lang AS SELECT set_config('app.lang', 'y', false);
-EXECUTE ss_lang;
 ROLLBACK;
+BEGIN;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_writer', true);
+    EXECUTE 'PREPARE ss_lang AS SELECT set_config(''app.lang'', ''y'','
+        ' false)';
+END $$;
+ROLLBACK;
+\set SHOW_CONTEXT errors
 BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
 SELECT ss_set_lang();
+ROLLBACK;
+-- A read-only request keeps the read-only error for SET too
+BEGIN;
+SELECT set_config('role', 'safesession_anon', true);
+SET default_transaction_read_only = off;
 ROLLBACK;
 BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
@@ -571,11 +586,14 @@ BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
 SELECT ss_ret_dom();
 COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_anon', true);
-SET LOCAL plan_cache_mode = force_generic_plan;
-PREPARE ss_q(int) AS SELECT * FROM ss_parted WHERE k = ss_pick($1);
 \set SHOW_CONTEXT never
+BEGIN;
+SET LOCAL plan_cache_mode = force_generic_plan;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_anon', true);
+    EXECUTE 'PREPARE ss_q(int) AS'
+        ' SELECT * FROM ss_parted WHERE k = ss_pick($1)';
+END $$;
 EXECUTE ss_q(1);
 \set SHOW_CONTEXT errors
 COMMIT;
@@ -593,13 +611,15 @@ BEGIN;
 SELECT set_config('role', 'safesession_anon', true);
 SELECT set_config('response.status', '201', true), ss_ret_dom();
 COMMIT;
-BEGIN;
-SELECT set_config('role', 'safesession_anon', true);
-SET LOCAL plan_cache_mode = force_generic_plan;
-PREPARE ss_q2(int) AS
-    SELECT set_config('response.status', '201', true), k
-    FROM ss_parted WHERE k = ss_pick($1);
 \set SHOW_CONTEXT never
+BEGIN;
+SET LOCAL plan_cache_mode = force_generic_plan;
+DO $$ BEGIN
+    PERFORM set_config('role', 'safesession_anon', true);
+    EXECUTE 'PREPARE ss_q2(int) AS'
+        ' SELECT set_config(''response.status'', ''201'', true), k'
+        ' FROM ss_parted WHERE k = ss_pick($1)';
+END $$;
 EXECUTE ss_q2(1);
 \set SHOW_CONTEXT errors
 COMMIT;
